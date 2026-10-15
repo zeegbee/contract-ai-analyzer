@@ -16,6 +16,7 @@ router = APIRouter(prefix="/health", tags=["health"])
 log = get_logger(__name__)
 
 _DB_TIMEOUT_S = 3.0
+_ACTIVE_SUPERADMIN = text("SELECT EXISTS (SELECT 1 FROM users WHERE role = 'superadmin' AND is_active)")
 
 
 @router.get("/live")
@@ -32,12 +33,19 @@ async def ready(request: Request) -> JSONResponse:
         async with asyncio.timeout(_DB_TIMEOUT_S), state.engine.connect() as conn:
             await conn.execute(text("SELECT 1"))
             revisions = await current_revisions(conn)
-        checks["database"] = "ok"
-        checks["migrations"] = "ok" if revisions == expected_heads() else "pending"
+            checks["database"] = "ok"
+            checks["migrations"] = "ok" if revisions == expected_heads() else "pending"
+            if checks["migrations"] == "ok":
+                has_admin = (await conn.execute(_ACTIVE_SUPERADMIN)).scalar_one()
+                # Без активного Superadmin войти некому: нужен bootstrap (BOOTSTRAP_ADMIN_*).
+                checks["accounts"] = "ok" if has_admin else "bootstrap_required"
+            else:
+                checks["accounts"] = "unknown"
     except Exception as exc:
         log.warning("readiness_db_failed", exc_type=type(exc).__name__)
         checks["database"] = "unavailable"
         checks["migrations"] = "unknown"
+        checks["accounts"] = "unknown"
 
     checks["storage"] = "ok" if state.storage.check_writable() else "unavailable"
 

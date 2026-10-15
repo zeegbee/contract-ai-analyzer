@@ -113,3 +113,60 @@ PostgreSQL для тестов: временный контейнер `postgres:
 - `requirements.lock` сгенерирован для linux/x86_64; на arm64-хостах его нужно перегенерировать.
 - Нативный запуск `python -m app.server` на Windows не проверялся (psycopg async требует SelectorEventLoop; тесты и worker это учитывают). Рекомендуемый путь — Docker или WSL.
 - Стек Docker Compose оставлен запущенным локально (`docker compose down` — остановить без удаления данных).
+
+## Этап 03 — Авторизация, роли, bootstrap, аудит (2026-10-15)
+
+### Выполнено
+- **Пароли** (`app/security/passwords.py`): Argon2id (argon2-cffi, t=3, m=64 МиБ, p=4 — выше минимума OWASP), пересчёт хеша при смене параметров, политика (12–128 символов, не из списка распространённых, без e-mail/имени, не из одного-трёх символов), выравнивание времени ответа для несуществующего e-mail, генерация временных паролей (16 символов).
+- **Сессии** (`app/security/sessions.py`): серверные сессии в `sessions`; в БД — только HMAC-SHA256(`SECRET_KEY`) токенов сессии и CSRF; cookie `cai_session` (HttpOnly, SameSite=Lax, Path=/api, Secure по `COOKIE_SECURE`) и `cai_csrf` (Path=/); скользящий idle (8 ч) и абсолютный (7 дней) TTL; новая сессия при входе и смене пароля; отзыв.
+- **CSRF**: для изменяющих запросов — `X-CSRF-Token` именно этой сессии (сравнение в постоянном времени) + `Origin`/`Referer` из `ALLOWED_ORIGINS`; `POST /auth/login` — проверка `Origin`.
+- **Rate limit** (`app/security/rate_limit.py`): скользящее окно в `login_attempts` (e-mail хранится как HMAC): 5 неудач на e-mail / 30 на IP за 15 мин → 429 + `Retry-After`; одинаково для существующих и несуществующих e-mail; сброс успешным входом или администратором; прогрессивная задержка ответа.
+- **RBAC** (`app/security/policies.py`) и **scoped-доступ** (`app/security/scoped.py`): условие доступа в SQL для документов/анализов/экспортов (view/analyze/manage); чужой объект неотличим от несуществующего (404); Admin не читает чужие договоры; Superadmin — системный доступ по ID с аудитом `document.accessed_by_superadmin`, в общем списке — только свои и явно доступные.
+- **Bootstrap** (`app/services/bootstrap.py`, `python -m app.cli bootstrap`, автоматически при старте backend): транзакция + advisory lock; идемпотентность (не меняет пароль/роль, не повышает существующего пользователя, не повторяется после `bootstrap_completed`); без параметров ничего не создаёт — readiness `accounts: bootstrap_required` (503) и предупреждение на странице входа; `must_change_password=true`; `BOOTSTRAP_ENABLED=false` отключает; напоминание в логе, если пароль остался в окружении.
+- **API**: `/auth/login|logout|me|change-password|sessions|sessions/{id}/revoke|sessions/revoke-others`; `/users` (список с фильтрами и курсором, создание с одноразовым временным паролем, изменение имени/роли/блокировки, `reset-password`, `revoke-sessions`, `unlock`, `model-permissions` GET/PUT); `/admin/audit`; read-only `/documents`, `/documents/{id}`, `/analyses/{id}`, `/exports/{id}` (метаданные; загрузка/анализ/экспорт — этапы 04–07).
+- **Правила ролей**: Admin не назначает Superadmin и не изменяет Superadmin; никто не меняет свою роль и не блокирует себя; последний активный Superadmin защищён; административные изменения сериализуются advisory lock с перечитыванием актора в транзакции. Найдено тестом и исправлено: встречное понижение двух Superadmin могло привести к deadlock и к проверке прав по устаревшей роли.
+- **Аудит** (`app/services/audit.py`): запись в той же транзакции, что и действие; входы и неудачи (причина, IP, префикс HMAC e-mail — без введённого текста), выход, сессии, смена/сброс пароля, создание/роль/блокировка/разблокировка, доступ к моделям, доступ Superadmin к чужому документу. Коды действий для загрузок, анализов, удалений, экспортов и моделей определены — запись добавят этапы 04–07.
+- **Readiness**: новая проверка `accounts` (есть ли активный Superadmin).
+- **Frontend**: вход (react-hook-form + zod, безопасный параметр `next`), принудительная смена пароля (навигация скрыта), «Мой профиль» (сессии и их завершение), «Пользователи» (фильтры, пагинация, создание только с разрешёнными ролями, одноразовый показ временного пароля), карточка пользователя (роль, блокировка с подтверждением, сброс пароля, завершение сессий, снятие блокировки входа, доступ к моделям, защита Superadmin), «Журнал аудита»; глобальная обработка 401 → страница входа. Найдено тестом и исправлено: при истечении сессии страница могла упасть до редиректа — пользователь теперь передаётся через контекст.
+- **Docker**: `BOOTSTRAP_*` передаются только сервису `backend`; `.env.example` дополнен.
+- Документация: ARCHITECTURE §6.2–6.4, OPERATIONS §1 и новый §9 «Учётные записи и доступ».
+
+### Изменённые файлы
+`backend/app/{config.py, main.py, cli.py}`, `backend/app/api/{health,deps,auth,users,audit,resources}.py`, `backend/app/security/*`, `backend/app/services/*`, `backend/app/schemas/*`, `backend/pyproject.toml`, `backend/requirements.lock` (+argon2-cffi 25.1.0, argon2-cffi-bindings 26.1.0), `backend/tests/unit/{test_passwords,test_policies,test_auth_unit}.py`, `backend/tests/integration/{conftest,test_auth_api,test_bootstrap,test_users_api,test_access_matrix,test_database}.py`, `frontend/src/api/{auth,users,audit}.ts`, `frontend/src/app/{session.ts,guards.tsx,Layout.tsx,routes.tsx,queryClient.ts}`, `frontend/src/components/{ui,TemporaryPasswordNotice}.tsx`, `frontend/src/lib/format.ts`, `frontend/src/pages/{LoginPage,ChangePasswordPage,AccountPage}.tsx`, `frontend/src/pages/admin/*`, `frontend/src/i18n/ru.ts`, `frontend/src/test/auth.ts`, тесты `*.test.tsx`, `compose.yaml`, `.env.example`, `docs/ARCHITECTURE.md`, `docs/OPERATIONS.md`, `docs/IMPLEMENTATION_STATUS.md`.
+
+Миграций нет: нужные таблицы созданы на этапе 02; соответствие моделей схеме проверяет `test_schema_matches_models`.
+
+### Проверки (реально запущены)
+PostgreSQL для тестов: временный контейнер `postgres:17-alpine` на `127.0.0.1:55432`, удалён после прогона.
+
+| Команда | Результат |
+|---|---|
+| `ruff check app tests` | `All checks passed!` |
+| `ruff format --check app tests` | `69 files already formatted` |
+| `mypy app tests` (strict) | `Success: no issues found in 68 source files` |
+| `TEST_DATABASE_URL=… pytest -q` | `163 passed in 38.06s` |
+| `pytest -q` без `TEST_DATABASE_URL` | `72 passed, 91 skipped` |
+| `npm run typecheck` | без ошибок |
+| `npx oxlint --deny-warnings src` | exit 0 |
+| `npx vitest run` | `Test Files 4 passed (4)`, `Tests 38 passed (38)` |
+| `npm run build` | `✓ built`; JS 517,8 КБ / 159,1 КБ gzip — предупреждение Vite о чанке > 500 КБ (разделение кода — на этапе 07) |
+| `docker compose up -d --build` | db, backend, worker, converter, frontend — `healthy`; migrate — `Exited (0)` |
+| Smoke через nginx (`127.0.0.1:8080`) | readiness 200, `accounts: ok`; лог `outcome: created`; вход с чужим Origin → 403; вход → 200, `must_change_password: true`; `/api/users` → 403 `password_change_required`; смена пароля без CSRF → 403, с CSRF → 200; затем `/api/users` → 200; cookie `cai_session` HttpOnly, Path=/api |
+| Перезапуск backend | `outcome: skipped_superadmin_exists` + `bootstrap_password_still_configured`; в БД 1 пользователь; вход старым bootstrap-паролем → 401 |
+| Аудит в БД | `user.bootstrap_created`, `auth.login_success`, `auth.password_changed` с IP |
+| Пароли в логах | `docker compose logs` не содержит ни bootstrap-пароля, ни нового пароля (0 совпадений) |
+
+Покрыто тестами: хеширование и политика; вход и неудачи (одинаковые ответы), заблокированный пользователь; rate limit по e-mail (в т.ч. несуществующий) и IP, сброс успешным входом и администратором; CSRF без токена, с токеном другой сессии, с чужим Origin; logout; idle/absolute TTL и скольжение; принудительная смена пароля; смена пароля отзывает остальные сессии и выдаёт новую; свои сессии (чужую отозвать нельзя — 404); rehash; bootstrap (пусто без параметров, создание, повтор без изменений, повтор после ручного понижения, конфликт e-mail, невалидные параметры, отключение, 5 параллельных запусков → 1 пользователь, старт приложения, коды выхода CLI); матрица ролей на всех эндпоинтах `/users` и `/admin/audit`; Admin против Superadmin; встречное понижение двух Superadmin; инвариант последнего Superadmin; блокировка отзывает сессии; сброс пароля; доступ к моделям; IDOR-матрица (7 ролей/ситуаций × документ/анализ/экспорт × свой/чужой/с доступом view/analyze/несуществующий/удаляемый), действия analyze/manage, понижение роли владельца, фильтрация списка, аудит доступа Superadmin, отсутствие названия договора в аудите; пароли и токены не попадают в логи и аудит.
+
+### Ограничения
+- Писем система не отправляет: временный пароль администратор передаёт пользователю вне системы.
+- Записи аудита для загрузок, анализов, удалений, экспортов и управления моделями появятся вместе с этими функциями (этапы 04–07); коды действий уже определены.
+- Роль БД без UPDATE/DELETE на `audit_log` — этап 08 (сейчас append-only обеспечивается кодом).
+- В локальном Docker с пробросом порта IP клиента в аудите — адрес шлюза Docker (`172.30.10.1`); за внешним reverse proxy нужно передавать `X-Forwarded-For` (OPERATIONS §9).
+- Локальный стек оставлен запущенным. В локальной БД создан Superadmin `root@example.org`; при smoke-тесте его пароль сменён (только для локального стенда; в репозиторий не записывается). В локальный `.env` (не коммитится) добавлены случайные `BOOTSTRAP_ADMIN_*`.
+
+### Исправление после приёмки (2026-10-15)
+- Симптом: вход из браузера отклонялся с `csrf_failed`. Причина: приложение открыто по `http://127.0.0.1:8080`, а в `ALLOWED_ORIGINS` был только `http://localhost:8080` (проверено: `Origin: http://127.0.0.1:8080` → 403, `http://localhost:8080` → 401 на неверных данных).
+- `.env.example` (и локальный `.env`): `ALLOWED_ORIGINS=http://localhost:8080,http://127.0.0.1:8080`.
+- Backend пишет в лог `csrf_rejected` с причиной (`origin_not_allowed` / `token_mismatch`) и полученным origin; добавлен тест `test_csrf_rejection_is_logged_with_reason`.
+- Проверки: `ruff check` — `All checks passed!`; `mypy app tests` — без ошибок (68 файлов); `pytest -q` с PostgreSQL — `164 passed`; после `docker compose up -d --build backend worker` оба origin проходят проверку (401 на неверные данные), `http://evil.example` → 403 и запись `csrf_rejected` в логе.

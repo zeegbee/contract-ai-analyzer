@@ -71,6 +71,24 @@ class Settings(BaseSettings):
     # --- Сервисы ---
     converter_url: str = "http://converter:8090"
 
+    # --- Сессии и вход ---
+    session_idle_minutes: int = Field(default=480, ge=5, le=7 * 24 * 60)
+    session_absolute_hours: int = Field(default=168, ge=1, le=90 * 24)
+    # Rate limit входа: неудачные попытки в скользящем окне.
+    login_window_minutes: int = Field(default=15, ge=1, le=24 * 60)
+    login_max_failures_per_email: int = Field(default=5, ge=1, le=100)
+    login_max_failures_per_ip: int = Field(default=30, ge=1, le=10_000)
+    # Прогрессивная задержка ответа после N-й неудачи по email (0 — выключена).
+    login_delay_step_ms: int = Field(default=500, ge=0, le=5_000)
+    login_delay_max_ms: int = Field(default=3_000, ge=0, le=30_000)
+
+    # --- Bootstrap первого Superadmin ---
+    # После инициализации рекомендуется false и удалить BOOTSTRAP_ADMIN_* из окружения.
+    bootstrap_enabled: bool = True
+    bootstrap_admin_email: str | None = None
+    bootstrap_admin_password: SecretStr | None = None
+    bootstrap_admin_name: str | None = None
+
     @field_validator("secrets_encryption_keys", mode="before")
     @classmethod
     def _split_keys(cls, value: object) -> object:
@@ -83,6 +101,15 @@ class Settings(BaseSettings):
     def _split_list(cls, value: object) -> object:
         if isinstance(value, str):
             return [v.strip() for v in value.split(",") if v.strip()]
+        return value
+
+    @field_validator(
+        "bootstrap_admin_email", "bootstrap_admin_password", "bootstrap_admin_name", mode="before"
+    )
+    @classmethod
+    def _empty_as_none(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            return None
         return value
 
     @field_validator("database_url")
@@ -145,6 +172,10 @@ class Settings(BaseSettings):
     @property
     def is_production(self) -> bool:
         return self.env is Environment.production
+
+    @property
+    def is_test(self) -> bool:
+        return self.env is Environment.test
 
     @property
     def docs_enabled(self) -> bool:

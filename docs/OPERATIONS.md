@@ -9,12 +9,13 @@
 ```bash
 cp .env.example .env
 # Заполните POSTGRES_PASSWORD, SECRET_KEY, SECRETS_ENCRYPTION_KEYS (команды генерации — в .env.example)
+# и BOOTSTRAP_ADMIN_EMAIL / BOOTSTRAP_ADMIN_PASSWORD / BOOTSTRAP_ADMIN_NAME для первого Superadmin (§9)
 docker compose up -d --build
 docker compose ps                      # все сервисы healthy, migrate — exited (0)
 curl -s http://127.0.0.1:8080/api/health/ready
 ```
 
-Приложение: http://localhost:8080. При `APP_ENV=development` OpenAPI доступен на `/api/docs`.
+Приложение: http://localhost:8080. При `APP_ENV=development` OpenAPI доступен на `/api/docs`. Войдите под e-mail и паролем из `BOOTSTRAP_ADMIN_*` — система сразу попросит сменить пароль.
 
 Порядок старта: `db` (healthy) → `migrate` (`alembic upgrade head`, завершается) → `backend` и `worker` → `frontend`.
 
@@ -142,3 +143,54 @@ deploy/restore.sh ./backups/<UTC-время> --confirm
            --generate-hashes --no-header pyproject.toml -o /out/requirements.lock"
   ```
 - Frontend-образ использует `npm ci` по `package-lock.json`.
+
+## 9. Учётные записи и доступ
+
+### Первый Superadmin (bootstrap)
+
+Пароля по умолчанию нет. Первый Superadmin создаётся из переменных окружения сервиса `backend`:
+
+```bash
+# .env
+BOOTSTRAP_ENABLED=true
+BOOTSTRAP_ADMIN_EMAIL=admin@company.example
+BOOTSTRAP_ADMIN_PASSWORD='<не короче 12 символов; не из списка распространённых>'
+BOOTSTRAP_ADMIN_NAME=Иван Петров
+docker compose up -d backend
+docker compose logs backend | grep bootstrap      # outcome: created
+```
+
+- Создание выполняется при старте backend в одной транзакции под advisory lock и только если Superadmin ещё нет и bootstrap не выполнялся ранее. Повторный старт ничего не меняет (`outcome: skipped_superadmin_exists`) — ни пароль, ни роль.
+- При первом входе система потребует сменить пароль.
+- **После первого входа** удалите `BOOTSTRAP_ADMIN_PASSWORD` (и остальные `BOOTSTRAP_ADMIN_*`) из `.env`, установите `BOOTSTRAP_ENABLED=false` и перезапустите backend. Пока пароль остаётся в окружении, при каждом старте в логе будет предупреждение `bootstrap_password_still_configured`.
+- Если переменные не заданы или пароль не проходит политику: аккаунт не создаётся, в логе — `bootstrap_failed` с именами переменных (без значений), `/api/health/ready` → 503 `accounts: bootstrap_required`, страница входа показывает предупреждение.
+- Ручной запуск (идемпотентно): `docker compose exec backend python -m app.cli bootstrap` — код выхода 0 (создан или уже существует), 1 (администратора нет и создать не удалось), 2 (ошибка конфигурации).
+- Если пользователь с `BOOTSTRAP_ADMIN_EMAIL` уже существует, bootstrap его не повышает.
+
+### Пароли, сессии, блокировки
+
+| Параметр | По умолчанию | Назначение |
+|---|---|---|
+| `SESSION_IDLE_MINUTES` | 480 | Сессия завершается после бездействия |
+| `SESSION_ABSOLUTE_HOURS` | 168 | Максимальный срок сессии |
+| `LOGIN_WINDOW_MINUTES` | 15 | Окно подсчёта неудачных попыток входа |
+| `LOGIN_MAX_FAILURES_PER_EMAIL` | 5 | Неудач на один e-mail в окне, затем 429 |
+| `LOGIN_MAX_FAILURES_PER_IP` | 30 | Неудач с одного IP в окне, затем 429 |
+| `LOGIN_DELAY_STEP_MS` / `LOGIN_DELAY_MAX_MS` | 500 / 3000 | Прогрессивная задержка ответа после неудач |
+
+- Пароли — Argon2id (t=3, m=64 МиБ, p=4), не короче 12 и не длиннее 128 символов, не из списка распространённых, без e-mail/имени. При изменении параметров хеш пересчитывается при следующем входе.
+- IP клиента берётся из `X-Forwarded-For` только от доверенного прокси (`TRUSTED_PROXY_IPS`); за внешним reverse proxy убедитесь, что nginx `frontend` получает реальный адрес клиента, иначе лимит по IP будет общим для всех.
+- `ALLOWED_ORIGINS` должен содержать **точный** адрес, по которому открывают приложение в браузере (схема, хост, порт). `http://localhost:8080` и `http://127.0.0.1:8080` — разные origin. Иначе вход и любые изменения отклоняются с `csrf_failed`; в логе backend — `csrf_rejected` с полученным `origin` и причиной (`origin_not_allowed` / `token_mismatch`). После изменения `.env` перезапустите backend: `docker compose up -d backend`.
+- Ротация `SECRET_KEY` завершает все сессии (в БД хранится HMAC токенов) и сбрасывает счётчики неудачных входов.
+- Записи `login_attempts` старше суток удаляются автоматически при следующих попытках входа.
+
+### Управление пользователями (UI «Пользователи», API `/api/users`)
+
+- Admin создаёт и изменяет Admin/Analyst/Viewer; Superadmin — всех. Admin не может назначить роль Superadmin и изменить/заблокировать Superadmin. Никто не может изменить свою роль или заблокировать себя. Последнего активного Superadmin понизить или заблокировать нельзя.
+- Создание пользователя и сброс пароля выдают **одноразовый временный пароль** — он показывается один раз, передайте его пользователю защищённым каналом. Сброс завершает все сессии пользователя и снимает блокировку входа.
+- Блокировка завершает все сессии; изменение роли действует со следующего запроса.
+- «Доступ к моделям»: персональное разрешение/запрет поверх ролей модели. Выключенная модель недоступна никому.
+
+### Аудит
+
+Журнал (UI «Журнал аудита», API `/api/admin/audit`, Admin и Superadmin) — append-only таблица `audit_log`: входы и неудачные входы (с IP и причиной, без введённых данных), выход и завершение сессий, смена/сброс пароля, создание пользователей, изменение ролей, блокировка, доступ к моделям, обращение Superadmin к чужим документам. Действия с документами, анализами, экспортом и моделями добавляются на этапах 04–07. Пароли, токены, ключи, тексты и названия договоров в журнал не пишутся.

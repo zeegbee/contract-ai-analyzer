@@ -65,7 +65,14 @@ services:
 
   backend:
     image: contract-ai-analyzer/backend:local
-    environment: *backend-env
+    environment:
+      <<: *backend-env
+      # Первый Superadmin создаётся при старте backend, только если его ещё нет (идемпотентно).
+      # После первого входа удалите BOOTSTRAP_ADMIN_* из .env и установите BOOTSTRAP_ENABLED=false.
+      BOOTSTRAP_ENABLED: ${BOOTSTRAP_ENABLED:-true}
+      BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
+      BOOTSTRAP_ADMIN_NAME: ${BOOTSTRAP_ADMIN_NAME:-}
     volumes:
       - storage:/data/storage
     tmpfs: ["/tmp:size=64m"]

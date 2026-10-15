@@ -1,9 +1,12 @@
 import { screen } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 
+import { makeMe, serveMe } from '../test/auth'
 import { renderRoute } from '../test/render'
 import { server } from '../test/server'
+
+beforeEach(() => serveMe(makeMe('analyst')))
 
 describe('StatusPage', () => {
   it('показывает готовность сервисов из API', async () => {
@@ -16,6 +19,19 @@ describe('StatusPage', () => {
     expect(await screen.findByText('Все сервисы готовы к работе')).toBeInTheDocument()
     expect(screen.getByText('База данных')).toBeInTheDocument()
     expect(screen.getAllByText('в порядке')).toHaveLength(3)
+  })
+
+  it('сообщает, что нужен первый администратор', async () => {
+    server.use(
+      http.get('*/api/health/ready', () =>
+        HttpResponse.json(
+          { status: 'not_ready', checks: { accounts: 'bootstrap_required' }, version: '0.1.0' },
+          { status: 503 },
+        ),
+      ),
+    )
+    renderRoute('/')
+    expect(await screen.findByText(/задайте BOOTSTRAP_ADMIN_/)).toBeInTheDocument()
   })
 
   it('показывает неготовность (503) как состояние, а не как ошибку', async () => {

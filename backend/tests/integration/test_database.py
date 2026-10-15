@@ -90,8 +90,26 @@ def test_upgrade_downgrade_roundtrip_on_clean_db() -> None:
 async def test_ready_with_migrated_database(pg_settings: Settings) -> None:
     app = create_app(pg_settings)
     pg_settings.storage_dir.mkdir(parents=True, exist_ok=True)
+    async with app.state.session_factory() as db:
+        await db.execute(text("TRUNCATE users CASCADE"))
+        await db.commit()
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+        # Без активного Superadmin войти некому — система не готова
         r = await c.get("/api/health/ready")
+        assert r.status_code == 503
+        assert r.json()["checks"]["accounts"] == "bootstrap_required"
+        async with app.state.session_factory() as db:
+            await db.execute(
+                text(
+                    "INSERT INTO users (email, display_name, password_hash, role)"
+                    " VALUES ('root@example.org', 'Root', 'x', 'superadmin')"
+                )
+            )
+            await db.commit()
+        r = await c.get("/api/health/ready")
+        async with app.state.session_factory() as db:
+            await db.execute(text("TRUNCATE users CASCADE"))
+            await db.commit()
     await app.state.engine.dispose()
     assert r.status_code == 200, r.text
-    assert r.json()["checks"] == {"database": "ok", "migrations": "ok", "storage": "ok"}
+    assert r.json()["checks"] == {"database": "ok", "migrations": "ok", "accounts": "ok", "storage": "ok"}

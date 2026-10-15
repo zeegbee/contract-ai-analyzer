@@ -13,6 +13,7 @@ dependencies = [
     "psycopg[binary]>=3.2,<4",
     "structlog>=25.1",
     "cryptography>=45",
+    "argon2-cffi>=25.1",
 ]
 
 [project.optional-dependencies]
@@ -55,6 +56,8 @@ ignore = ["PLR0911", "PLR0913", "PLR2004", "RUF001", "RUF002", "RUF003", "S101"]
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S", "PLR0915", "PLC0415"]
 "app/db/migrations/**" = ["E501"]
+# Эндпоинты FastAPI получают зависимости параметрами — их естественно больше пяти.
+"app/api/**" = ["PLR0917"]
 
 [tool.mypy]
 python_version = "3.13"

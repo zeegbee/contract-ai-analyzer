@@ -8,6 +8,11 @@
 - Открытые вопросы решены «по умолчанию» (см. конец `docs/IMPLEMENTATION_PLAN.md`).
 - Кроме промптов есть **дополнительный этап 08A** (автоматические зашифрованные бэкапы с выгрузкой вне сервера, расписание, ротация) — описан в `docs/IMPLEMENTATION_PLAN.md`. Выполняется после 08 и до 09 (или раньше по явной команде пользователя); перед началом уточнить у пользователя значения из таблицы «по умолчанию».
 
+## Текущее состояние (2026-10-15)
+- Сделаны и закоммичены этапы 00–03 (последний — `Stage 03: auth, roles, bootstrap, audit`).
+- Следующий этап — промпт `04-document-ingestion.md` (загрузка и извлечение). Ждать, пока пользователь пришлёт его.
+- Локальный Docker-стек может быть запущен (`docker compose ps`). Локальный Superadmin — `root@example.org`; его текущий пароль не из `.env` (сменён при smoke-тесте) и в репозиторий не пишется — он в локальной памяти Claude или у пользователя. Открывать `http://localhost:8080` или `http://127.0.0.1:8080` (оба в `ALLOWED_ORIGINS`).
+
 ## С чего начать новую сессию
 1. `docs/IMPLEMENTATION_STATUS.md` — что сделано и проверено, ограничения последнего этапа.
 2. `docs/ARCHITECTURE.md` — целевая архитектура (модель данных §5, RBAC §6, загрузка §8, анализ §9–11, провайдеры §12, очередь §13).
@@ -18,7 +23,14 @@
 
 ## Структура
 - `backend/` — FastAPI, SQLAlchemy 2 (async, psycopg 3), Alembic (`app/db/migrations`), worker (`app/worker.py`), очередь задач в PostgreSQL (`app/jobs/`), обработчики задач регистрируются через `@register("type")` в `app/jobs/registry.py`.
+  - `app/security/` — `passwords.py` (Argon2id, политика), `sessions.py` (сессии/cookie/CSRF), `rate_limit.py`, `policies.py` (RBAC — единственное место правил ролей), `scoped.py` (`get_document_for/get_analysis_for/get_export_for` — условие доступа в SQL, 404 для чужого).
+  - `app/services/` — `auth.py`, `users.py` (админ-изменения через `begin_admin_change`: advisory lock + перечитывание актора), `bootstrap.py`, `audit.py` (`record(db, AuditAction.x, ...)` в той же транзакции; коды для этапов 04–07 уже есть: `document.uploaded`, `document.deleted`, `analysis.started`, `export.downloaded`, `model.updated` и др.).
+  - `app/api/deps.py` — зависимости: `Db`, `Auth` (проверка сессии + CSRF для изменяющих методов + `must_change_password`), `AuthPasswordChange`, `AdminAuth`. Новые эндпоинты: всегда через `Auth`/`AdminAuth`, объекты — только через `scoped.py`.
+  - `app/api/resources.py` — пока read-only метаданные `/documents`, `/analyses/{id}`, `/exports/{id}`; этап 04+ расширяет их. Доступ Superadmin к чужому документу аудируется (`document.accessed_by_superadmin`).
+  - `app/schemas/` — Pydantic DTO; `app/cli.py` — `python -m app.cli bootstrap`.
 - `frontend/` — React 19 + TS strict + Vite + Tailwind 4 + React Router 7 + TanStack Query + Zod; тексты UI в `src/i18n/ru.ts`; nginx-образ.
+  - `src/app/session.ts` (`useMe`, `useCurrentUser` — из контекста `RequireAuth`), `src/app/guards.tsx` (`RequireAuth`, `RequireCapability` — только UX), `src/components/ui.tsx` (Button, Field, Notice, PageTitle), API-модули в `src/api/` (zod-схемы ответов).
+  - Тесты: MSW + `src/test/auth.ts` (`makeMe(role)`, `serveMe(me|null)`, `readyHandler`); страница входа запрашивает `/api/health/ready` — в тестах нужен обработчик.
 - `converter/` — изолированный LibreOffice (пока только `/health`; `/convert` → 501 до этапа 04).
 - `compose.yaml` (корень), `compose.dev.yaml` (БД на 127.0.0.1:55432), `deploy/backup.sh|restore.sh`.
 
@@ -34,6 +46,7 @@ cd frontend && npm run typecheck && npx oxlint --deny-warnings src && npx vitest
 # docker
 docker compose up -d --build && curl -s http://127.0.0.1:8080/api/health/ready
 ```
+Integration-тесты API: фикстура `api` (`tests/integration/conftest.py`) — `api.create_user(role)`, `api.login(user)` (клиент с cookie и `X-CSRF-Token`), `api.execute/rows/scalar(sql)`; таблицы очищаются TRUNCATE перед каждым тестом.
 Тестовая БД: `docker run -d --name cai-test-pg -e POSTGRES_PASSWORD=devpass -e POSTGRES_USER=cai -e POSTGRES_DB=cai -p 127.0.0.1:55432:5432 postgres:17-alpine` (после прогона удалить). Интеграционные тесты сами создают и удаляют временную БД `cai_test_*`.
 
 ## Соглашения и подводные камни
@@ -45,5 +58,9 @@ docker compose up -d --build && curl -s http://127.0.0.1:8080/api/health/ready
 - Enum-поля — `str_enum()` (VARCHAR + CHECK), колонку с именем `text` не называть рядом с `sqlalchemy.text` (используй `sql_text`).
 - После изменения `backend/pyproject.toml` перегенерировать `backend/requirements.lock` (команда в `docs/OPERATIONS.md` §8).
 - Ошибки API — только через `AppError`-иерархию (`app/errors.py`); не возвращать и не логировать пользовательский ввод/текст договоров; поля с содержимым в логах называть `text`/`quote`/`content` — они редактируются автоматически.
-- Доступ к чужому объекту → 404 (не 403).
+- Доступ к чужому объекту → 404 (не 403). Нехватка роли для эндпоинта → 403 `permission_denied`.
+- Ключи в `details` аудита и в логах: ключи, похожие на секреты (`password`, `token`, `session_id`, …), автоматически заменяются на `[REDACTED]` — для ID сессии используй ключ `session`.
+- ruff S105 ругается на строковые константы со словом password (коды действий) — `# noqa: S105` с пояснением.
+- Heredoc в Git Bash портит `\` — TS/py-файлы с обратными слэшами писать через Write/Edit.
+- `ALLOWED_ORIGINS` должен точно совпадать с адресом в браузере; отказ виден в логе backend как `csrf_rejected`.
 - Локальный `.env` создан со случайными секретами и не коммитится.

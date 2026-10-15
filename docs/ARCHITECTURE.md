@@ -110,7 +110,7 @@ docs/
 
 **User** — `email` (unique, lower-case), `display_name`, `password_hash` (Argon2id), `role` (`superadmin|admin|analyst|viewer`), `is_active`, `must_change_password`, `failed_login_count`, `locked_until`, `password_changed_at`, `last_login_at`, `created_by_id`.
 
-**Session** — `user_id`, `token_hash` (SHA-256 от случайного 256-битного токена; сам токен хранится только в cookie), `csrf_token_hash`, `created_at`, `last_seen_at`, `expires_at` (абсолютный TTL), `idle_expires_at` (скользящий TTL), `revoked_at`, `revoked_reason`, `ip`, `user_agent` (усечённый).
+**Session** — `user_id`, `token_hash` (HMAC-SHA256 с `SECRET_KEY` от случайного 256-битного токена; сам токен хранится только в cookie), `csrf_token_hash`, `created_at`, `last_seen_at`, `expires_at` (абсолютный TTL), `idle_expires_at` (скользящий TTL), `revoked_at`, `revoked_reason`, `ip`, `user_agent` (усечённый).
 
 **DocumentAccess** — `document_id`, `user_id`, `permission` (`view|analyze`), `granted_by_id`. Явный доступ для Viewer и для совместной работы.
 
@@ -184,27 +184,30 @@ docs/
 ### 6.2 Принудительное применение
 
 - Единый модуль политик `security/policies.py`: `authorize(actor, action, resource) -> None | raise`. Каждый эндпоинт вызывает политику; UI только отражает права.
-- Загрузка объектов только через scoped-репозитории: `get_document_for(actor, id, action)`, `get_analysis_for(...)`, `get_export_for(...)`. Они строят запрос с условием доступа (`owner_id = actor OR EXISTS(DocumentAccess) OR actor is superadmin`), а не загружают объект и проверяют потом. Нет доступа → `404 not_found`.
+- Загрузка объектов только через scoped-репозитории (`app/security/scoped.py`): `get_document_for(actor, id, action)`, `get_analysis_for(...)`, `get_export_for(...)`. Они строят запрос с условием доступа (`owner_id = actor OR EXISTS(DocumentAccess) OR actor is superadmin`), а не загружают объект и проверяют потом. Нет доступа → `404 not_found`.
 - Дочерние объекты (страницы, фрагменты, риски, доказательства, экспорты) проверяются через родительский документ; ID дочернего объекта в URL всегда сочетается с ID родителя, и сервер проверяет принадлежность.
-- Списки фильтруются тем же условием на уровне SQL.
+- Списки фильтруются тем же условием на уровне SQL. Список документов у всех ролей, включая Superadmin, — «свои и явно доступные»; системный доступ Superadmin к чужому документу — только по ID и с записью `document.accessed_by_superadmin` в аудит.
 - Тесты IDOR: для каждого эндпоинта с ID — матрица ролей × «свой/чужой/с доступом/несуществующий».
 
 ### 6.3 Сессии и аутентификация
 
 - Пароли: Argon2id (`argon2-cffi`, параметры по OWASP), проверка длины ≥ 12 и по списку распространённых паролей; повторное хеширование при смене параметров.
-- Вход: `POST /api/auth/login` → создаёт `Session`, ставит cookie `cai_session` (`HttpOnly; Secure; SameSite=Lax; Path=/api`) и `cai_csrf` (не HttpOnly, для чтения SPA). Ротация ID сессии при входе и смене пароля.
-- TTL: idle 8 ч, absolute 7 дней (настраивается). Смена пароля или блокировка отзывает все сессии пользователя.
-- CSRF: для всех изменяющих методов требуется заголовок `X-CSRF-Token`, совпадающий с токеном сессии (сравнение в постоянном времени), и `Origin`/`Referer` из списка разрешённых.
-- Rate limit входа: по IP и по email (скользящее окно в PostgreSQL), прогрессивная задержка, временная блокировка после N неудач; ответ не раскрывает, существует ли email.
-- `must_change_password`: до смены пароля доступны только `/auth/me`, `/auth/change-password`, `/auth/logout`.
+- Вход: `POST /api/auth/login` → создаёт `Session`, ставит cookie `cai_session` (`HttpOnly; Secure; SameSite=Lax; Path=/api`) и `cai_csrf` (не HttpOnly, `Path=/`, для чтения SPA на любой странице). Новая сессия при каждом входе и смене пароля (защита от фиксации). В БД — только HMAC токенов; ротация `SECRET_KEY` инвалидирует все сессии.
+- TTL: idle 8 ч (скользящий, продлевается не чаще раза в минуту), absolute 7 дней (`SESSION_IDLE_MINUTES`, `SESSION_ABSOLUTE_HOURS`). Смена пароля, сброс пароля администратором или блокировка отзывают все сессии пользователя. Пользователь видит и завершает свои сессии (`/auth/sessions`), администратор — завершает все сессии пользователя.
+- CSRF: для всех изменяющих методов требуется заголовок `X-CSRF-Token`, совпадающий с токеном именно этой сессии (сравнение HMAC в постоянном времени), и `Origin` (или при его отсутствии `Referer`) из `ALLOWED_ORIGINS`. `POST /auth/login` (сессии ещё нет) защищён проверкой `Origin`.
+- Rate limit входа: скользящее окно в PostgreSQL (`login_attempts`, e-mail хранится как HMAC): по e-mail — `LOGIN_MAX_FAILURES_PER_EMAIL` (5) неудач за `LOGIN_WINDOW_MINUTES` (15) после последнего успешного входа, по IP — `LOGIN_MAX_FAILURES_PER_IP` (30); затем `429` с `Retry-After`. Прогрессивная задержка ответа с третьей неудачи (`LOGIN_DELAY_STEP_MS`, максимум `LOGIN_DELAY_MAX_MS`). Ответы для неизвестного e-mail и неверного пароля совпадают (включая время — проверка «пустого» хеша). Сообщение «учётная запись заблокирована» показывается только при верном пароле. Администратор может снять блокировку входа.
+- `must_change_password`: до смены пароля доступны только `/auth/me`, `/auth/change-password`, `/auth/logout`, `/auth/sessions*`; остальное — `403 password_change_required`.
+- Административные изменения пользователей выполняются последовательно (advisory lock) с перечитыванием актора в транзакции: права проверяются по актуальной роли, встречные изменения двух Superadmin не приводят к deadlock и не оставляют систему без Superadmin.
+- Временный пароль (создание пользователя, сброс) генерируется сервером (16 символов, ≈95 бит), возвращается в ответе один раз, хранится только как хеш; пользователь обязан сменить его при первом входе.
 
 ### 6.4 Bootstrap первого Superadmin
 
-Команда `python -m app.cli bootstrap` (и автоматически при старте, если `BOOTSTRAP_ENABLED=true`):
+Команда `python -m app.cli bootstrap` (и автоматически при старте backend, если `BOOTSTRAP_ENABLED=true`, по умолчанию true; переменные `BOOTSTRAP_ADMIN_*` передаются только сервису `backend`):
 1. В одной транзакции с advisory lock: если существует хотя бы один superadmin — ничего не меняет (не трогает пароль/роль), пишет в лог «bootstrap пропущен».
 2. Если superadmin нет и заданы `BOOTSTRAP_ADMIN_EMAIL`, `BOOTSTRAP_ADMIN_PASSWORD` (проходит политику паролей), `BOOTSTRAP_ADMIN_NAME` — создаёт пользователя с `must_change_password=true`, аудит `user.bootstrap_created`.
-3. Если superadmin нет и параметров нет — сервер стартует, но `/api/health/ready` сообщает `bootstrap_required`, вход невозможен, открытых аккаунтов нет. Пароль по умолчанию не существует.
-4. Пароль никогда не логируется; после инициализации рекомендуется удалить переменные из окружения и выставить `BOOTSTRAP_ENABLED=false`.
+3. Если superadmin нет и параметров нет (или они не проходят политику) — сервер стартует, в лог пишется `bootstrap_failed` с перечнем недостающих переменных (без значений), `/api/health/ready` отвечает 503 с `accounts: bootstrap_required`, страница входа показывает предупреждение; вход невозможен, открытых аккаунтов нет. Пароль по умолчанию не существует. CLI в этом случае завершается с кодом 1.
+3a. Если bootstrap уже выполнялся (`system_settings.bootstrap_completed`) — повторно не выполняется, даже если Superadmin позже понижен вручную. Если пользователь с `BOOTSTRAP_ADMIN_EMAIL` уже существует — он не повышается и его пароль не меняется.
+4. Пароль никогда не логируется; после инициализации рекомендуется удалить переменные из окружения и выставить `BOOTSTRAP_ENABLED=false` (при пропуске bootstrap с заданным паролем в лог пишется напоминание `bootstrap_password_still_configured`).
 
 ## 7. API
 
