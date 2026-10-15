@@ -128,7 +128,7 @@
 
 | Угроза | Мера | Этап |
 |---|---|---|
-| XSS | React-экранирование, запрет `dangerouslySetInnerHTML` (eslint), CSP без inline-скриптов, `nosniff` | 02, 07 |
+| XSS | React-экранирование, запрет `dangerouslySetInnerHTML` (oxlint `react/no-danger`), CSP без inline-скриптов, `nosniff` | 02, 07 |
 | SQL injection | Только SQLAlchemy с параметрами; нет конкатенации SQL | 02+ |
 | Clickjacking | `frame-ancestors 'none'`, `X-Frame-Options: DENY` | 02 |
 | CORS-злоупотребления | Один origin, CORS выключен; при необходимости — строгий allowlist с credentials | 02 |

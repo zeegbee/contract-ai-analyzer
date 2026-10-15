@@ -32,3 +32,7 @@ Thumbs.db
 
 # Prompt package (local reference only)
 contract-ai-analyzer-prompts/
+
+# Backups (содержат конфиденциальные данные)
+backups/
+.data/

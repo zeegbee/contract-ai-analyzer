@@ -24,7 +24,7 @@
 - `backend/`: pyproject (FastAPI, SQLAlchemy 2 async + psycopg 3, Alembic, pydantic-settings, structlog), app factory, конфигурация с проверкой обязательных параметров, единый формат ошибок, request ID middleware, security headers, логирование с редактированием, `/api/health/live|ready`.
 - ORM-модели и первая миграция для всех сущностей из ARCHITECTURE §5 (схема целиком сразу, чтобы последующие этапы не требовали разрушительных миграций).
 - Очередь задач (`Job`) — базовые claim/heartbeat/reaper + каркас worker'а.
-- `frontend/`: Vite + React + TS strict + Tailwind + Router + TanStack Query, страница-заглушка входа без фиктивных данных, ESLint, Vitest.
+- `frontend/`: Vite + React + TS strict + Tailwind + Router + TanStack Query, страница состояния системы на реальном readiness API (без фиктивных данных), oxlint, Vitest.
 - `converter/`: Dockerfile и минимальный HTTP-сервис (реальная логика — этап 04).
 - `compose.yaml` (db, migrate, backend, worker, converter, frontend, profile `ollama`), сети и volumes, healthchecks, non-root; `.env.example`, `.dockerignore`, `.gitattributes` (LF для `*.sh`, Dockerfile, конфигов).
 - `docs/OPERATIONS.md`: локальный запуск, backup/restore PostgreSQL и storage.

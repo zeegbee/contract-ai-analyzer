@@ -1,0 +1,7 @@
+# Дополнение для локальной разработки: публикует PostgreSQL только на 127.0.0.1.
+# docker compose -f compose.yaml -f compose.dev.yaml up -d db
+services:
+  db:
+    ports:
+      - "127.0.0.1:${DEV_DB_PORT:-55432}:5432"
+    networks: [data, egress]

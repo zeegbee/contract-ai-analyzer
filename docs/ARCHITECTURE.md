@@ -18,7 +18,7 @@
 
 | # | Решение | Обоснование |
 |---|---|---|
-| D1 | Монорепозиторий: `backend/`, `frontend/`, `converter/`, `deploy/`, `docs/` | Один набор версий, один compose-файл |
+| D1 | Монорепозиторий: `backend/`, `frontend/`, `converter/`, `deploy/`, `docs/`; `compose.yaml` в корне | Один набор версий, один compose-файл |
 | D2 | Backend: Python 3.13, FastAPI, Pydantic v2, SQLAlchemy 2.x (async, драйвер psycopg 3), Alembic | Предпочтительный стек; Python 3.13 установлен на машине разработки и используется в образах, чтобы окружения совпадали |
 | D3 | PostgreSQL 17 — единственное хранилище состояния, включая очередь задач | Без Redis/брокера: меньше компонентов; `SELECT … FOR UPDATE SKIP LOCKED` даёт надёжную очередь с транзакционными гарантиями |
 | D4 | Отдельный процесс `worker` (тот же образ, что backend) выполняет извлечение, анализ, экспорт, очистку | Длительные операции не держат HTTP-запросы; worker перезапускается независимо |
@@ -98,7 +98,7 @@ backend/
 converter/                # Dockerfile + маленький HTTP-сервис вокруг soffice
 frontend/
   src/ (api/, features/, components/, routes/, i18n/ru.ts)
-deploy/                   # compose.yaml, nginx.conf, backup/restore скрипты
+deploy/                   # backup/restore скрипты (compose.yaml — в корне, nginx.conf — в frontend/)
 docs/
 ```
 
@@ -362,7 +362,7 @@ UI и отчёт: `verified_match` — «цитата найдена в текс
 - Модель не может повлиять на статус проверки, страницы, пункты, права, модель и параметры: всё это вычисляет сервер.
 - Эвристический детектор подозрительных инструкций в тексте («игнорируй предыдущие инструкции», «ignore previous», роли `system:` и т.п.) → предупреждение в отчёте и в `Analysis.summary.warnings`, без изменения поведения конвейера.
 - Верификатор работает в отдельном контексте, чтобы инъекция в анализе не «подтвердила» сама себя.
-- Вывод модели в UI отображается как текст (React экранирует; `dangerouslySetInnerHTML` запрещён линтером; Markdown не рендерится), в PDF/DOCX экспорт — с экранированием разметки.
+- Вывод модели в UI отображается как текст (React экранирует; `dangerouslySetInnerHTML` запрещён линтером oxlint `react/no-danger`; Markdown не рендерится), в PDF/DOCX экспорт — с экранированием разметки.
 
 ## 12. Слой LLM-провайдеров
 
@@ -411,12 +411,12 @@ StructuredResult: parsed_json, raw_text_len, usage: Usage | None (prompt/complet
 
 ## 16. Frontend
 
-- React 18 + TypeScript (strict), Vite, Tailwind, React Router, TanStack Query, React Hook Form + Zod, тексты интерфейса — в `i18n/ru.ts`.
+- React 19 + TypeScript (strict), Vite, Tailwind 4, React Router 7, TanStack Query, React Hook Form + Zod, тексты интерфейса — в `i18n/ru.ts`.
 - API-клиент: `credentials: 'include'`, автоматический `X-CSRF-Token`, разбор единого формата ошибок с показом `request_id`.
 - Маршрутизация с проверкой роли — только UX; защиту обеспечивает backend.
 - Страницы: вход/смена пароля, обзор, договоры (список, загрузка drag-and-drop, просмотр текста по страницам/фрагментам), запуск анализа (документ/версия, сторона, категории, глубина, модель, облачное согласие), список анализов, отчёт (фильтры, карточки рисков, переход к фрагменту), экспорт, администрирование (пользователи, провайдеры, модели, настройки, аудит).
 - Без фиктивных данных: пустые состояния с подсказками.
-- CSP: `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'` (Tailwind без inline-скриптов), `frame-ancestors 'none'`.
+- CSP: `default-src 'self'; script-src 'self'; style-src 'self'` (Tailwind собирается в файл, inline-стилей и скриптов нет), `frame-ancestors 'none'`.
 - Тесты: Vitest + Testing Library + MSW.
 
 ## 17. Экспорт
@@ -436,7 +436,7 @@ StructuredResult: parsed_json, raw_text_len, usage: Usage | None (prompt/complet
 | Frontend | Vitest, Testing Library, MSW | вход, загрузка, выбор модели, облачное согласие, фильтры, статусы доказательств, ошибки, ролевые экраны |
 | E2E | Playwright против compose-стека с mock-провайдером (этап 08) | bootstrap → login → upload → extraction → analysis → evidence → export |
 | Качество LLM | небольшой размеченный набор синтетических договоров (без реальных данных), ручной прогон с реальной моделью | точность цитат, доля rejected; не входит в CI |
-| Статический анализ | ruff, mypy (strict для `analysis/`, `security/`), eslint, `tsc --noEmit`, `pip-audit`/`npm audit` | |
+| Статический анализ | ruff, mypy (strict для всего backend), oxlint (в т.ч. `react/no-danger`), `tsc --noEmit`, `pip-audit`/`npm audit` | |
 
 Live-проверки OpenRouter/Ollama не входят в CI; если не выполнялись — это указывается в статусе.
 

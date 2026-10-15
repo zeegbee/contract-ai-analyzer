@@ -1,0 +1,145 @@
+# Contract AI Analyzer — Docker Compose.
+# Запуск: cp .env.example .env (заполнить значения) → docker compose up -d --build
+# Подробнее: docs/OPERATIONS.md
+
+name: contract-ai-analyzer
+
+x-backend-env: &backend-env
+  ENV: ${APP_ENV:-production}
+  DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-cai}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD не задан}@db:5432/${POSTGRES_DB:-cai}
+  SECRET_KEY: ${SECRET_KEY:?SECRET_KEY не задан}
+  SECRETS_ENCRYPTION_KEYS: ${SECRETS_ENCRYPTION_KEYS:?SECRETS_ENCRYPTION_KEYS не задан}
+  ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:?ALLOWED_ORIGINS не задан}
+  COOKIE_SECURE: ${COOKIE_SECURE:-true}
+  # Доверяем X-Forwarded-* только от nginx из сети edge.
+  TRUSTED_PROXY_IPS: 172.30.10.0/24
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  LOG_FORMAT: json
+  STORAGE_DIR: /data/storage
+  CONVERTER_URL: http://converter:8090
+  WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-2}
+
+x-hardening: &hardening
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options: { max-size: "10m", max-file: "5" }
+
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-cai}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD не задан}
+      POSTGRES_DB: ${POSTGRES_DB:-cai}
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks: [data]
+    # Порт наружу не публикуется. Для локальной отладки — compose.dev.yaml.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    shm_size: 256m
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
+
+  migrate:
+    build: ./backend
+    image: contract-ai-analyzer/backend:local
+    command: ["alembic", "upgrade", "head"]
+    environment: *backend-env
+    networks: [data]
+    depends_on:
+      db: { condition: service_healthy }
+    <<: *hardening
+    restart: "no"
+
+  backend:
+    image: contract-ai-analyzer/backend:local
+    environment: *backend-env
+    volumes:
+      - storage:/data/storage
+    tmpfs: ["/tmp:size=64m"]
+    networks: [edge, data, egress]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    <<: *hardening
+
+  worker:
+    image: contract-ai-analyzer/backend:local
+    command: ["python", "-m", "app.worker"]
+    environment: *backend-env
+    volumes:
+      - storage:/data/storage
+    tmpfs: ["/tmp:size=256m"]
+    networks: [data, egress, convert]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.worker", "--healthcheck"]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
+    stop_grace_period: 60s
+    <<: *hardening
+
+  converter:
+    build: ./converter
+    image: contract-ai-analyzer/converter:local
+    networks: [convert]
+    tmpfs: ["/tmp:size=512m,mode=1777"]
+    mem_limit: 1g
+    cpus: 1.0
+    pids_limit: 128
+    <<: *hardening
+
+  frontend:
+    build: ./frontend
+    image: contract-ai-analyzer/frontend:local
+    ports:
+      # По умолчанию только localhost. В production — за внешним TLS reverse proxy.
+      - "${HTTP_BIND:-127.0.0.1}:${HTTP_PORT:-8080}:8080"
+    tmpfs: ["/tmp:size=32m"]
+    networks:
+      edge:
+        ipv4_address: 172.30.10.10
+    depends_on:
+      backend: { condition: service_healthy }
+    <<: *hardening
+
+  # Локальный Ollama (опционально): docker compose --profile ollama up -d
+  # Модели не скачиваются автоматически: docker compose exec ollama ollama pull <model>
+  ollama:
+    image: ollama/ollama:latest
+    profiles: [ollama]
+    volumes:
+      - ollama:/root/.ollama
+    networks: [egress]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+
+networks:
+  edge:
+    ipam:
+      config:
+        - subnet: 172.30.10.0/24
+  data:
+    internal: true
+  egress: {}
+  convert:
+    internal: true
+
+volumes:
+  pgdata:
+  storage:
+  ollama:
