@@ -1,0 +1,465 @@
+# Contract AI Analyzer — архитектура
+
+Статус: проект архитектуры (этап 01). Реализация начинается с этапа 02. Документ описывает целевое состояние; что реально сделано и проверено — только в `IMPLEMENTATION_STATUS.md`.
+
+Связанные документы: [THREAT_MODEL.md](THREAT_MODEL.md), [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md).
+
+---
+
+## 1. Назначение и границы
+
+Русскоязычное веб-приложение для предварительного анализа договоров (DOC, DOCX, PDF с текстовым слоем): извлечение текста со страницами и фрагментами, поиск юридических и коммерческих рисков с помощью LLM (OpenRouter или локальный Ollama), серверная проверка каждой цитаты, отчёты и экспорт, управление пользователями, моделями и настройками.
+
+Не входит в обязательный объём: OCR сканированных PDF, редактирование договоров, электронная подпись, multi-tenant SaaS (одна организация на инсталляцию), мобильные приложения.
+
+Система — инструмент поддержки анализа, не юридическая консультация. Это отражается в UI, отчётах и экспорте.
+
+## 2. Ключевые решения
+
+| # | Решение | Обоснование |
+|---|---|---|
+| D1 | Монорепозиторий: `backend/`, `frontend/`, `converter/`, `deploy/`, `docs/` | Один набор версий, один compose-файл |
+| D2 | Backend: Python 3.13, FastAPI, Pydantic v2, SQLAlchemy 2.x (async, драйвер psycopg 3), Alembic | Предпочтительный стек; Python 3.13 установлен на машине разработки и используется в образах, чтобы окружения совпадали |
+| D3 | PostgreSQL 17 — единственное хранилище состояния, включая очередь задач | Без Redis/брокера: меньше компонентов; `SELECT … FOR UPDATE SKIP LOCKED` даёт надёжную очередь с транзакционными гарантиями |
+| D4 | Отдельный процесс `worker` (тот же образ, что backend) выполняет извлечение, анализ, экспорт, очистку | Длительные операции не держат HTTP-запросы; worker перезапускается независимо |
+| D5 | Отдельный контейнер `converter` с LibreOffice для DOC→DOCX и DOCX→PDF (для разметки страниц) | Изоляция недоверенного парсера: без интернета, без доступа к БД/хранилищу, лимиты CPU/RAM, read-only FS |
+| D6 | Серверные сессии в БД + HttpOnly cookie; CSRF-токен (synchronizer) + проверка `Origin` | Возможность отзыва сессий; JWT в localStorage уязвим к XSS |
+| D7 | Frontend и API на одном origin: nginx отдаёт SPA и проксирует `/api` | CORS не нужен; SameSite-cookie работают предсказуемо |
+| D8 | Файлы на диске (volume) за абстракцией `StorageBackend` | Просто для Docker Compose; позже можно подключить S3-совместимое хранилище |
+| D9 | Единый интерфейс `LLMProvider`, адаптеры OpenRouter и Ollama на `httpx` без SDK | Полный контроль над таймаутами, редиректами, SSRF-защитой и логированием |
+| D10 | Секреты провайдеров хранятся в БД зашифрованными (Fernet/MultiFernet), ключ — только в env/secret manager | Каталог провайдеров меняется без пересборки и рестарта; ключ отделён от данных; поддержана ротация |
+| D11 | Проверка доказательств в два независимых шага: точное совпадение (детерминированно) и смысловая поддержка (отдельный LLM-проход верификатора + правила) | Требование: совпадение текста само по себе не доказывает риск |
+| D12 | ID всех сущностей — UUID; доступ к чужому объекту возвращает 404 | Нет перебора ID, нет утечки факта существования |
+
+## 3. Компоненты и развёртывание
+
+```
+                    ┌──────────── Browser (SPA, ru) ────────────┐
+                    └──────────────────┬─────────────────────────┘
+                                       │ HTTPS (в prod — внешний reverse proxy: Caddy/Traefik/nginx)
+                              ┌────────▼────────┐
+                              │  frontend       │ nginx: static SPA + proxy /api → backend
+                              └────────┬────────┘   security headers, CSP
+                                       │ network: edge
+                              ┌────────▼────────┐
+                              │  backend (API)  │ FastAPI/uvicorn, без root
+                              └───┬────────┬────┘
+                    network: data │        │ network: egress (только backend/worker)
+               ┌──────────────────┤        └──────────► OpenRouter (HTTPS), внешний Ollama
+        ┌──────▼─────┐   ┌────────▼───────┐
+        │ postgres   │◄──┤ worker         │ та же кодовая база, `python -m app.worker`
+        │ (no ports) │   └───┬────────┬───┘
+        └────────────┘       │        │ network: convert (internal: true, без выхода в интернет)
+                     volume: │  ┌─────▼──────┐
+                     storage │  │ converter  │ LibreOffice headless, read-only FS, tmpfs, mem/cpu limits
+                             │  └────────────┘
+                     (backend и worker монтируют storage; converter — нет)
+
+        ollama (опционально, compose profile `ollama`) — в сети egress/llm, либо внешний хост
+```
+
+| Сервис | Образ | Порты наружу | Volumes | Сети |
+|---|---|---|---|---|
+| `frontend` | nginx (unprivileged) + собранный SPA | 8080 (локально); в prod — за reverse proxy | — | edge |
+| `backend` | python:3.13-slim, пользователь `app` | нет (через frontend) | `storage` | edge, data, egress |
+| `worker` | тот же образ, другой command | нет | `storage` | data, egress, convert |
+| `converter` | debian-slim + libreoffice-writer-nogui, пользователь `conv` | нет | tmpfs | convert (`internal: true`) |
+| `db` | postgres:17 | нет (в dev — опционально `127.0.0.1:5432`) | `pgdata` | data |
+| `ollama` | ollama/ollama (profile) | нет | `ollama` | llm |
+
+Миграции: отдельная одноразовая команда/сервис `migrate` (`alembic upgrade head`), запускается перед стартом backend/worker; backend при старте проверяет, что схема на `head`, и не стартует (readiness=false), если нет. Автоматический downgrade не выполняется.
+
+Health/readiness:
+- `GET /api/health/live` — процесс жив.
+- `GET /api/health/ready` — БД доступна, миграции на `head`, storage доступен на запись. Не делает внешних запросов к LLM.
+- worker пишет heartbeat в таблицу `worker_heartbeat`; healthcheck контейнера проверяет его свежесть.
+
+## 4. Структура репозитория (целевая)
+
+```
+backend/
+  app/
+    main.py               # FastAPI app factory
+    config.py             # pydantic-settings, валидация при старте
+    db/                   # engine, session, base, миграции alembic/
+    models/               # SQLAlchemy ORM
+    schemas/              # Pydantic DTO (API) — отдельно от ORM
+    api/                  # роутеры: auth, users, documents, analyses, exports, admin/*
+    security/             # sessions, csrf, passwords, rbac/policies, ssrf, crypto
+    services/             # бизнес-логика (documents, analyses, catalog, audit, settings)
+    ingestion/            # validators, extractors (pdf, docx, doc), fragmenter, page mapping
+    llm/                  # LLMProvider, openrouter.py, ollama.py, mock.py, http client с SSRF guard
+    analysis/             # pipeline, chunking, prompts/ (версионированные), schemas, evidence/
+    exports/              # pdf, docx, csv, xlsx
+    jobs/                 # очередь, worker loop, handlers, reaper
+    logging.py            # structlog + redaction
+  tests/                  # unit/, integration/, fixtures/ (генерируемые документы)
+  pyproject.toml
+converter/                # Dockerfile + маленький HTTP-сервис вокруг soffice
+frontend/
+  src/ (api/, features/, components/, routes/, i18n/ru.ts)
+deploy/                   # compose.yaml, nginx.conf, backup/restore скрипты
+docs/
+```
+
+## 5. Модель данных
+
+Все таблицы: `id UUID PK`, `created_at`, `updated_at` (timestamptz, UTC). Мягкое удаление только там, где указано. Внешние ключи с явным `ON DELETE`.
+
+### 5.1 Пользователи и доступ
+
+**User** — `email` (unique, lower-case), `display_name`, `password_hash` (Argon2id), `role` (`superadmin|admin|analyst|viewer`), `is_active`, `must_change_password`, `failed_login_count`, `locked_until`, `password_changed_at`, `last_login_at`, `created_by_id`.
+
+**Session** — `user_id`, `token_hash` (SHA-256 от случайного 256-битного токена; сам токен хранится только в cookie), `csrf_token_hash`, `created_at`, `last_seen_at`, `expires_at` (абсолютный TTL), `idle_expires_at` (скользящий TTL), `revoked_at`, `revoked_reason`, `ip`, `user_agent` (усечённый).
+
+**DocumentAccess** — `document_id`, `user_id`, `permission` (`view|analyze`), `granted_by_id`. Явный доступ для Viewer и для совместной работы.
+
+**UserModelPermission** — `user_id`, `model_config_id`, `allowed` (bool). Персональные разрешения/запреты поверх ролевых (`ModelConfig.allowed_roles`).
+
+**ConsentRecord** — `user_id`, `provider_config_id`, `notice_version`, `accepted_at`. Факт ознакомления с предупреждением о передаче текста внешнему провайдеру. Дополнительно согласие подтверждается в каждом запросе на облачный анализ и сохраняется в `Analysis`.
+
+### 5.2 Документы
+
+**Document** — `owner_id`, `title`, `status` (`active|deleting`), `deleted_at`, `current_version_id`.
+
+**DocumentVersion** — `document_id`, `version_no`, `original_filename` (только для отображения, санитизированный), `detected_format` (`pdf|docx|doc`), `mime_type` (определённый сервером), `size_bytes`, `sha256`, `storage_key` (случайный UUID-путь), `converted_storage_key` (DOCX после конвертации DOC), `extraction_status` (`pending|processing|ready|failed|unsupported_no_text`), `extraction_error_code`, `extractor_version`, `page_count`, `page_source` (см. §8.4), `canonical_text_storage_key`, `warnings` (JSONB), `uploaded_by_id`.
+
+**DocumentPage** — `version_id`, `page_no` (1-based), `char_start`, `char_end` (смещения в каноническом тексте версии), `source` (`pdf_native|docx_rendered_breaks|libreoffice_render`).
+
+**DocumentFragment** — `version_id`, `seq` (порядковый номер в версии, 0-based), `fragment_key` (стабильный человекочитаемый ключ `F{seq:06d}`; уникален в версии), `kind` (`heading|paragraph|table_row|table_cell|list_item|footnote|header_footer`), `text` (как извлечено, без нормализации), `char_start`, `char_end` (в каноническом тексте), `page_start`, `page_end` (nullable — только если достоверно известны), `clause_ref` (nullable, например `4.2`; только при достоверном определении), `heading_path` (JSONB: цепочка заголовков разделов), `table_ref` (JSONB: таблица/строка/ячейка), `meta` (JSONB: стиль, bbox для PDF), `text_sha256`.
+
+Стабильность ID: фрагменты неизменяемы после извлечения. Повторное извлечение (новая версия экстрактора) создаёт новую `DocumentVersion` или явную операцию re-extract, которая запрещена при наличии анализов на этой версии. Доказательства всегда ссылаются на `fragment.id` конкретной версии.
+
+### 5.3 Анализ
+
+**Analysis** — `document_id`, `version_id`, `created_by_id`, `status` (`queued|running|verifying|completed|completed_with_warnings|failed|cancelling|cancelled`), `party` (`party_a|party_b|named|unknown`), `party_name`, `categories` (массив кодов), `depth` (`quick|standard|deep`), `model_config_id`, `config_snapshot` (JSONB: провайдер, тип, base_url-хост, external model id, generation params, контекст, версии промптов и схем, версия чанкера и нормализатора — **без секретов**), `cloud_transfer` (bool), `cloud_consent_at`, `idempotency_key` (unique вместе с `created_by_id`), `progress` (JSONB: этап, чанков всего/готово), `summary` (JSONB), `coverage` (JSONB: обработанные разделы/фрагменты, пропуски), `usage` (JSONB: токены/стоимость — только если вернул провайдер), `error_code`, `error_message_safe`, `started_at`, `finished_at`, `cancel_requested_at`.
+
+**AnalysisChunk** — `analysis_id`, `chunk_index`, `chunk_key` (детерминированный хеш), `fragment_seq_start`, `fragment_seq_end`, `overlap_from_seq`, `status` (`pending|running|done|failed|skipped`), `attempts`, `result` (JSONB, валидированный ответ модели), `error_code`, `tokens_in/out`.
+
+**AnalysisRisk** — `analysis_id`, `risk_key` (`R-001`…), `kind` (`clause_risk|missing_clause|contradiction`), `title`, `category`, `severity` (`critical|high|medium|low|informational`), `description`, `reason`, `consequences`, `affected_party`, `recommendation`, `suggested_revision` (nullable, всегда помечается как проект), `model_confidence` (0–1, оценка модели), `validation_status` (`verified_match|needs_review|rejected`), `validation_notes` (JSONB), `search_scope` (JSONB — только для `missing_clause`: проверенные разделы/фрагменты, ограничения), `source_chunk_ids`, `dedup_group`, `is_hidden_by_user` (не удаляет данные).
+
+**RiskEvidence** — `risk_id`, `fragment_id` (FK на реальный фрагмент той же версии), `fragment_ids_span` (для цитат через границу соседних фрагментов), `quote` (как вернула модель), `quote_normalized`, `match_status` (`exact|normalized|not_found|fragment_mismatch|too_short`), `match_char_start`, `match_char_end` (в каноническом тексте), `page_start`, `page_end`, `clause_ref` (взяты с сервера из метаданных фрагмента), `relevance_status` (`supports|partially_supports|does_not_support|unchecked`), `relevance_rationale`, `relevance_checked_by` (`verifier_llm|rules`), `verifier_model_snapshot`.
+
+### 5.4 Каталог моделей и настройки
+
+**ProviderConfig** — `name`, `type` (`openrouter|ollama`), `base_url`, `is_cloud` (true для OpenRouter; для Ollama — по признаку адреса/явной настройке), `enabled`, `secret_ciphertext` (nullable), `secret_key_id`, `secret_last4`, `allow_private_network` (только Superadmin, для доверенной локальной Ollama), `timeout_s`, `max_concurrency`, `extra_headers` (без секретов), `last_check_at`, `last_check_status`, `last_check_error_safe`, `version` (оптимистическая блокировка).
+
+**ModelConfig** — `provider_config_id`, `display_name`, `external_model_id`, `enabled`, `purpose` (массив: `analysis|verifier|structure`), `priority`, `is_default` (частичный unique-индекс на одну модель по назначению), `allowed_roles`, `context_window` (nullable — если известно), `max_output_tokens`, `generation_params` (JSONB: temperature, top_p, seed…), `structured_output` (`json_schema|json_mode|none|unknown` — `json_schema` только если подтверждено проверкой), `pricing` (JSONB: значения + `source` (`provider_api|admin_manual`) + `fetched_at`; если неизвестно — `null`, UI показывает «неизвестно»), `last_tested_at`, `last_test_status`, `version`.
+
+**ConfigRevision** — история изменений провайдеров/моделей/настроек: `entity_type`, `entity_id`, `revision`, `diff` (JSONB, секреты заменены на `***`), `changed_by_id`.
+
+**SystemSetting** — `key`, `value` (JSONB), `updated_by_id`. Ключи: `cloud_models_enabled`, `cloud_notice_version`, `cloud_notice_text`, `max_upload_mb`, `max_pages`, `max_concurrent_analyses_per_user`, `max_analysis_tokens`, `retention_days` (null = бессрочно), `bootstrap_completed`, `default_depth`.
+
+### 5.5 Задачи, аудит, экспорт
+
+**Job** — `type` (`extract_document|run_analysis|build_export|purge_document|refresh_model_catalog`), `payload` (JSONB, только ID), `status` (`queued|running|succeeded|failed|cancelled|dead`), `priority`, `attempts`, `max_attempts`, `run_after`, `locked_by`, `lease_expires_at`, `heartbeat_at`, `last_error_code`, `dedup_key` (unique для активных задач).
+
+**Export** — `analysis_id`, `requested_by_id`, `format` (`pdf|docx|csv|xlsx`), `status`, `storage_key`, `expires_at`.
+
+**AuditLog** — append-only: `actor_user_id`, `action` (`auth.login_success`, `auth.login_failed`, `user.role_changed`, `model.updated`, `document.uploaded`, `analysis.started`, `document.deleted`, `export.downloaded`, …), `target_type`, `target_id`, `ip`, `request_id`, `details` (JSONB, без паролей, ключей и текста договоров), `created_at`. Приложение не выполняет UPDATE/DELETE над этой таблицей (в prod — отдельная роль БД без этих прав).
+
+**WorkerHeartbeat** — `worker_id`, `last_seen_at`, `version`.
+
+## 6. Права доступа
+
+### 6.1 Роли
+
+| Возможность | Superadmin | Admin | Analyst | Viewer |
+|---|---|---|---|---|
+| Управление пользователями | все роли | analyst, viewer, admin*; не может назначать/изменять superadmin | — | — |
+| Провайдеры: секреты, `allow_private_network`, base_url OpenRouter | да | нет | — | — |
+| Модели: включение, роли, разрешения пользователям | да | да | — | — |
+| Системные настройки (облако вкл/выкл, лимиты, retention) | да | только чтение | — | — |
+| Журнал аудита | да | да | — | — |
+| Загрузка документов | да | да | да | нет |
+| Свои документы: чтение, анализ, удаление, выдача доступа | да | да | да | — |
+| Чужие документы | да (системный доступ, действие аудируется) | только при явном `DocumentAccess` | только при явном `DocumentAccess` | только `view` при явном доступе |
+| Запуск анализа | да | да | на своих и с `analyze` | нет |
+| Экспорт отчёта | на доступных | на доступных | на доступных | на доступных (view) |
+
+\* Admin не может повысить кого-либо до superadmin, изменить/заблокировать superadmin, изменить собственную роль. Последнего активного Superadmin нельзя понизить или заблокировать.
+
+Решение: Admin управляет пользователями и моделями, но **не читает содержимое чужих договоров** без явного доступа (принцип минимальных привилегий; администрирование ≠ доступ к конфиденциальным данным).
+
+### 6.2 Принудительное применение
+
+- Единый модуль политик `security/policies.py`: `authorize(actor, action, resource) -> None | raise`. Каждый эндпоинт вызывает политику; UI только отражает права.
+- Загрузка объектов только через scoped-репозитории: `get_document_for(actor, id, action)`, `get_analysis_for(...)`, `get_export_for(...)`. Они строят запрос с условием доступа (`owner_id = actor OR EXISTS(DocumentAccess) OR actor is superadmin`), а не загружают объект и проверяют потом. Нет доступа → `404 not_found`.
+- Дочерние объекты (страницы, фрагменты, риски, доказательства, экспорты) проверяются через родительский документ; ID дочернего объекта в URL всегда сочетается с ID родителя, и сервер проверяет принадлежность.
+- Списки фильтруются тем же условием на уровне SQL.
+- Тесты IDOR: для каждого эндпоинта с ID — матрица ролей × «свой/чужой/с доступом/несуществующий».
+
+### 6.3 Сессии и аутентификация
+
+- Пароли: Argon2id (`argon2-cffi`, параметры по OWASP), проверка длины ≥ 12 и по списку распространённых паролей; повторное хеширование при смене параметров.
+- Вход: `POST /api/auth/login` → создаёт `Session`, ставит cookie `cai_session` (`HttpOnly; Secure; SameSite=Lax; Path=/api`) и `cai_csrf` (не HttpOnly, для чтения SPA). Ротация ID сессии при входе и смене пароля.
+- TTL: idle 8 ч, absolute 7 дней (настраивается). Смена пароля или блокировка отзывает все сессии пользователя.
+- CSRF: для всех изменяющих методов требуется заголовок `X-CSRF-Token`, совпадающий с токеном сессии (сравнение в постоянном времени), и `Origin`/`Referer` из списка разрешённых.
+- Rate limit входа: по IP и по email (скользящее окно в PostgreSQL), прогрессивная задержка, временная блокировка после N неудач; ответ не раскрывает, существует ли email.
+- `must_change_password`: до смены пароля доступны только `/auth/me`, `/auth/change-password`, `/auth/logout`.
+
+### 6.4 Bootstrap первого Superadmin
+
+Команда `python -m app.cli bootstrap` (и автоматически при старте, если `BOOTSTRAP_ENABLED=true`):
+1. В одной транзакции с advisory lock: если существует хотя бы один superadmin — ничего не меняет (не трогает пароль/роль), пишет в лог «bootstrap пропущен».
+2. Если superadmin нет и заданы `BOOTSTRAP_ADMIN_EMAIL`, `BOOTSTRAP_ADMIN_PASSWORD` (проходит политику паролей), `BOOTSTRAP_ADMIN_NAME` — создаёт пользователя с `must_change_password=true`, аудит `user.bootstrap_created`.
+3. Если superadmin нет и параметров нет — сервер стартует, но `/api/health/ready` сообщает `bootstrap_required`, вход невозможен, открытых аккаунтов нет. Пароль по умолчанию не существует.
+4. Пароль никогда не логируется; после инициализации рекомендуется удалить переменные из окружения и выставить `BOOTSTRAP_ENABLED=false`.
+
+## 7. API
+
+- Префикс `/api`, JSON, OpenAPI доступен только при `ENV=development` (или под авторизацией Superadmin).
+- Единый формат ошибок:
+  ```json
+  {"error": {"code": "document_not_found", "message": "Документ не найден", "request_id": "…", "details": {}}}
+  ```
+  `message` безопасен для показа; стектрейсы и внутренние детали — только в логах (без содержимого договоров).
+- `X-Request-ID` на каждом ответе.
+- Пагинация по курсору (`?cursor=&limit=`), лимит ≤ 100.
+- Идемпотентность: `Idempotency-Key` для `POST /analyses`, `POST /documents`, `POST /exports`.
+- Основные ресурсы: `/auth/*`, `/users/*`, `/documents`, `/documents/{id}/versions/{vid}/{pages|fragments|file}`, `/documents/{id}/access`, `/analyses`, `/analyses/{id}/{risks|cancel|retry|events}`, `/analyses/{id}/exports`, `/exports/{id}/download`, `/models/available`, `/admin/{providers|models|settings|audit}`.
+- Прогресс анализа: polling `GET /analyses/{id}` (основной путь) и SSE `GET /analyses/{id}/events` (опционально, этап 07).
+
+## 8. Загрузка и извлечение документов
+
+### 8.1 Приём файла (API)
+
+1. Проверка прав (роль ≥ analyst) и лимитов (размер из `max_upload_mb`, по умолчанию 25 МБ; проверяется потоково, без чтения целиком в память сверх лимита).
+2. Имя файла используется только для отображения: санитизация, без использования в путях.
+3. Определение формата по сигнатуре: PDF `%PDF-`; DOCX — ZIP с `[Content_Types].xml` и `word/document.xml`, без `vbaProject.bin` и без macro-enabled content type; DOC — OLE2 `D0 CF 11 E0 A1 B1 1A E1` с потоком `WordDocument`. Расширение и заявленный `Content-Type` должны соответствовать определённому формату, иначе `415 unsupported_file_type`.
+4. Сохранение во временный файл → вычисление SHA-256 → атомарное перемещение в `storage/originals/{uuid}` (каталог вне web-root, права 0600, файл не исполняемый).
+5. Создание `DocumentVersion(extraction_status=pending)` и задачи `extract_document`; ответ `202` с ID.
+
+### 8.2 Извлечение (worker)
+
+Выполняется в дочернем процессе worker'а с таймаутом и `RLIMIT_AS`/`RLIMIT_CPU` (Linux), чтобы зависший/вредоносный файл не ронял worker.
+
+- **ZIP-проверки (DOCX)** до открытия python-docx: число записей ≤ 2000, суммарный распакованный размер ≤ 200 МБ, коэффициент сжатия ≤ 100, запрет абсолютных путей и `..` в именах, XML разбирается без внешних сущностей (`defusedxml`/lxml с `resolve_entities=False`).
+- **PDF (PyMuPDF)**: отказ для зашифрованных; `page_count ≤ max_pages` (по умолчанию 500); текст по блокам/строкам с `page_no` и bbox; удаление повторяющихся колонтитулов помечается флагом, не удаляет текст из канонической версии. Если на всех страницах меньше порога символов → `unsupported_no_text` с понятным сообщением (OCR не поддерживается).
+- **DOCX (python-docx + обход XML тела)**: абзацы и таблицы в порядке документа (итерация по `w:body` с обработкой `w:p` и `w:tbl`), таблицы построчно с координатами ячеек, сноски; автонумерация списков вычисляется из `numbering.xml` для типовых форматов (decimal, многоуровневые `1.2.3`), иначе `clause_ref` не заполняется.
+- **DOC**: worker отправляет файл в `converter` (HTTP в изолированной сети), получает DOCX, сохраняет как `converted_storage_key`, дальше — путь DOCX. Предупреждение «формат DOC сконвертирован, возможны расхождения форматирования».
+
+### 8.3 Конвертер
+
+- Контейнер с LibreOffice `--headless --norestore --nolockcheck`, на каждый запрос — новый временный профиль (`-env:UserInstallation=file:///tmp/…`), конфигурация с `MacroSecurityLevel=3` (макросы запрещены), Java отключена.
+- Лимиты: таймаут 60 с с убийством группы процессов, `mem_limit`, `cpus`, `pids_limit`, `read_only: true` + tmpfs, `cap_drop: ALL`, `no-new-privileges`, сеть `internal: true` (нет интернета, нет доступа к БД).
+- Одновременно один процесс soffice на контейнер (очередь на стороне worker'а).
+- Принимает только DOC (для конвертации в DOCX) и DOCX (для рендера в PDF для разметки страниц).
+
+### 8.4 Страницы и пункты — без выдумывания
+
+| Формат | Источник страниц | Достоверность |
+|---|---|---|
+| PDF | физические страницы файла (`pdf_native`) | точная |
+| DOCX/DOC | 1) `w:lastRenderedPageBreak` и явные разрывы страниц, сохранённые Word (`docx_rendered_breaks`), если они покрывают документ; 2) иначе — рендер в PDF через converter и сопоставление текста фрагментов со страницами (`libreoffice_render`) | приблизительная; UI и отчёт подписывают «стр. по разметке LibreOffice, может отличаться от Word» |
+| если сопоставить не удалось | `page_start = null` + предупреждение | страница не указывается |
+
+`clause_ref` заполняется только если номер явно присутствует в тексте заголовка/абзаца (`4.2.`, `Статья 5`, `Раздел 3`) или однозначно вычислен из автонумерации. Иначе — `null`, и в отчёте пункт не указывается.
+
+### 8.5 Канонический текст и фрагменты
+
+- Канонический текст версии — конкатенация `fragment.text` через `\n\n`; хранится файлом и используется для смещений. Он не нормализуется (кроме приведения переводов строк к `\n`), чтобы цитаты сверялись с тем, что реально извлечено.
+- Фрагмент — абзац, пункт списка, строка таблицы или заголовок. Длинные абзацы (> ~2000 символов) делятся по границам предложений с сохранением непрерывных смещений.
+
+## 9. Конвейер анализа
+
+### 9.1 Запуск (API, синхронно)
+
+1. Политика: доступ `analyze` к документу; версия в статусе `ready`.
+2. Модель: включена, провайдер включён, доступна роли/пользователю; если `is_cloud` — `cloud_models_enabled=true` и в запросе `cloud_consent=true` (иначе `409 cloud_consent_required`).
+3. Лимиты: число активных анализов пользователя; оценка токенов (`len(text)/3.5` × коэффициент глубины + проходы) ≤ `max_analysis_tokens`; если цена модели известна — оценка стоимости показывается, но не выдумывается при неизвестной цене.
+4. Идемпотентность по `Idempotency-Key`: повторный запрос возвращает тот же анализ.
+5. Создание `Analysis` со snapshot конфигурации, `AnalysisChunk` и задачи `run_analysis`. Аудит `analysis.started` (без текста).
+
+### 9.2 Этапы (worker)
+
+```
+plan → structure → chunk_analysis (N) → cross_section → dedup → evidence_match → evidence_relevance → (retry_unverified) → coverage → report
+```
+
+1. **Чанкинг.** Последовательные фрагменты группируются в чанки по бюджету токенов модели (`context_window` − системный промпт − резерв на вывод; если контекст неизвестен — консервативные 8k). Перекрытие — последние фрагменты предыдущего чанка общей длиной ~15% бюджета (не менее одного фрагмента). Фрагмент не режется между чанками. `chunk_key = sha256(version_id, seq_start, seq_end, chunker_version, model_ctx)` — повторный запуск даёт те же чанки.
+2. **Структура.** Отдельный вызов (или детерминированно из заголовков, если модель недоступна для этого назначения) строит оглавление: разделы → диапазоны фрагментов, стороны договора, предмет. Используется для контекста и проверки полноты.
+3. **Анализ чанков.** Каждый чанк — отдельный вызов с: сторона анализа, категории, краткая структура договора, фрагменты в формате `<fragment id="F000123" page="4">…</fragment>`. Модель возвращает риски строго по JSON-схеме (§9.3). Результат валидируется Pydantic и сохраняется в `AnalysisChunk.result` — поэтому после сбоя продолжается с первого незавершённого чанка.
+4. **Межраздельный проход.** На вход — сжатые карточки рисков и ключевые условия (сроки, суммы, ответственность, порядок расторжения) с фрагментами-источниками; поиск противоречий и отсутствующих условий (`missing_clause`), с явным перечнем проверенных разделов.
+5. **Дедупликация.** Риски из перекрытий и соседних чанков объединяются по (категория, пересечение fragment_id доказательств, близость заголовков — нормализованное сходство); при объединении сохраняются все доказательства, severity — максимальная, заметка о слиянии.
+6. **Проверка доказательств** (§10).
+7. **Повтор для неподтверждённых.** Для рисков с `not_found`/`fragment_mismatch` — один повторный запрос к модели с исходными фрагментами и просьбой дать точную цитату или отозвать риск. После этого — окончательная классификация.
+8. **Полнота.** Покрытие: все ли чанки `done`, какие разделы структуры не попали ни в один успешный чанк; результат — в `Analysis.coverage`, при пропусках статус `completed_with_warnings`.
+9. **Отчёт.** Сводка: число рисков по severity и статусу проверки, сторона, модель/snapshot, охваченные категории и разделы, ограничения. Никогда не формулируется как «договор безопасен»; при отсутствии подтверждённых рисков — «в проанализированных разделах модель не выявила подтверждённых рисков; это не гарантирует отсутствие рисков».
+
+Если сторона `unknown`: промпт требует описывать риски нейтрально («для стороны, принимающей обязательство…»), `affected_party` из набора `party_a|party_b|both|unclear`, и запрещает оценки «выгодно/невыгодно для вас».
+
+### 9.3 JSON-схема ответа анализа чанка
+
+Pydantic-модели с `extra="forbid"`, ограничениями длины и перечислениями; из них генерируется JSON Schema для `response_format`/`format`.
+
+```json
+{
+  "risks": [
+    {
+      "title": "string ≤ 200",
+      "category": "payment|liability|penalties|deadlines|renewal|termination|unilateral_changes|warranties|confidentiality|personal_data|intellectual_property|governing_law|force_majeure|acceptance|undefined_terms|contradiction|missing_clause|other",
+      "kind": "clause_risk|missing_clause|contradiction",
+      "severity": "critical|high|medium|low|informational",
+      "description": "string ≤ 2000",
+      "reason": "string ≤ 2000",
+      "consequences": "string ≤ 2000",
+      "affected_party": "party_a|party_b|both|unclear",
+      "recommendation": "string ≤ 2000",
+      "suggested_revision": "string ≤ 3000 | null",
+      "model_confidence": 0.0,
+      "evidence": [
+        {"fragment_id": "F000123", "quote": "string 10..1500"}
+      ],
+      "search_scope": "string ≤ 1000 | null"
+    }
+  ],
+  "notes": "string ≤ 1000 | null"
+}
+```
+
+Правила, проверяемые сервером, а не только схемой: `fragment_id` должен входить в фрагменты этого чанка; для `clause_risk` и `contradiction` — минимум одно доказательство (для contradiction — минимум два из разных фрагментов); для `missing_clause` доказательства не обязательны, `search_scope` обязателен; поля страниц/пунктов в ответе модели отсутствуют — их подставляет сервер; ссылки на нормы права допускаются только как текст рекомендации и помечаются в UI «требует проверки юристом» — сервер не подтверждает существование норм.
+
+Невалидный JSON → одна попытка «repair» (тот же вызов с сообщением об ошибке валидации, без текста договора в логах) → иначе чанк `failed` с `error_code=invalid_model_output`.
+
+## 10. Проверка доказательств
+
+### 10.1 Шаг A — точное совпадение (детерминированно)
+
+1. `fragment_id` → реальный `DocumentFragment` той же версии (иначе `fragment_mismatch`; несуществующий ID → риск не может быть `verified_match`).
+2. Нормализация (документирована, версия `normalizer_version`), применяется одинаково к цитате и тексту фрагмента и **не меняет слова**:
+   - Unicode NFC;
+   - CR/LF, табуляции, NBSP (`U+00A0`), узкие пробелы (`U+2009`, `U+202F`) → пробел; последовательности пробелов → один пробел; обрезка по краям;
+   - удаление мягкого переноса `U+00AD` и zero-width символов;
+   - эквивалентность типографских кавычек (`«»„“”"`) и тире (`‐‑–—−-`) — только как классы символов.
+   Регистр, буквы, цифры, знаки препинания (кроме перечисленных классов) не нормализуются.
+3. Поиск нормализованной цитаты в нормализованном тексте фрагмента; если не найдено — в объединении фрагмента с соседними (±1) того же чанка (цитата через границу абзаца/страницы).
+4. Результат: `exact` (совпало без нормализации) / `normalized` (совпало после нормализации) / `not_found` / `too_short` (< 20 символов или < 4 слов — тривиальная цитата не доказывает ничего). Сохраняются смещения в каноническом тексте (обратное отображение нормализованных позиций в исходные).
+5. Страница и пункт вычисляются сервером по смещениям и метаданным фрагментов; всё, что модель могла написать о страницах, игнорируется.
+
+### 10.2 Шаг B — смысловая поддержка (отдельно)
+
+- Отдельный вызов модели-верификатора (назначение `verifier`; по умолчанию та же модель, можно выбрать другую), без истории анализа: на вход — формулировка риска (title, reason, category, kind), цитата и окружающий контекст (фрагмент ±1). Вопрос: подтверждает ли цитата именно это утверждение? Ответ по схеме: `supports|partially_supports|does_not_support` + краткое обоснование.
+- Детерминированные правила поверх: цитата целиком из заголовка/оглавления → не выше `partially_supports`; для contradiction — доказательства должны быть из разных фрагментов.
+- Если верификатор недоступен — `relevance_status=unchecked`.
+
+### 10.3 Итоговый статус риска
+
+| Условие | `validation_status` |
+|---|---|
+| Все обязательные доказательства `exact/normalized` и хотя бы одно `supports`, ни одно не `does_not_support` | `verified_match` |
+| Совпадение есть, но связь `partially_supports` или `unchecked` | `needs_review` |
+| `missing_clause` (нет цитаты по определению) | `needs_review` + отдельный тип отображения с `search_scope` |
+| После повтора нет ни одного совпавшего доказательства, фиктивный `fragment_id`, или все совпавшие `does_not_support` | `rejected` |
+
+UI и отчёт: `verified_match` — «цитата найдена в тексте и подтверждает риск по оценке верификатора»; `needs_review` — «требует проверки»; `rejected` — скрыты по умолчанию, доступны фильтром «отклонённые», никогда не показываются как установленный факт.
+
+## 11. Защита от prompt injection
+
+- Текст договора передаётся только в user-сообщении внутри разделителей `<fragment …>` с экранированием `<`/`>` в содержимом; системный промпт явно указывает, что содержимое фрагментов — данные, инструкции в них не выполняются.
+- Модель не получает секретов, системных настроек, данных других пользователей; у неё нет инструментов (tool calling выключен) — единственный эффект ответа — JSON, который сервер валидирует.
+- Строгая схема с `extra="forbid"`, enum-категориями, ограничениями длины; любые поля вне схемы отбрасываются, ответ без схемы — ошибка.
+- Модель не может повлиять на статус проверки, страницы, пункты, права, модель и параметры: всё это вычисляет сервер.
+- Эвристический детектор подозрительных инструкций в тексте («игнорируй предыдущие инструкции», «ignore previous», роли `system:` и т.п.) → предупреждение в отчёте и в `Analysis.summary.warnings`, без изменения поведения конвейера.
+- Верификатор работает в отдельном контексте, чтобы инъекция в анализе не «подтвердила» сама себя.
+- Вывод модели в UI отображается как текст (React экранирует; `dangerouslySetInnerHTML` запрещён линтером; Markdown не рендерится), в PDF/DOCX экспорт — с экранированием разметки.
+
+## 12. Слой LLM-провайдеров
+
+```python
+class LLMProvider(Protocol):
+    async def generate_structured(self, req: StructuredRequest) -> StructuredResult: ...
+    async def check_connection(self) -> ProviderHealth: ...
+    async def list_models(self) -> list[RemoteModelInfo]: ...
+
+StructuredRequest: messages, json_schema, schema_name, model, params (temperature, max_tokens, seed), timeout
+StructuredResult: parsed_json, raw_text_len, usage: Usage | None (prompt/completion tokens, cost — только если вернул провайдер), provider_request_id, finish_reason
+```
+
+- Ошибки нормализуются в иерархию: `ProviderTimeout`, `ProviderRateLimited(retry_after)`, `ProviderAuthError`, `ModelUnavailable`, `ContextTooLong`, `InvalidModelOutput`, `ProviderUnavailable`. Бизнес-логика работает только с ними.
+- Повторы: только для timeout/429/5xx, максимум 3, экспоненциальный backoff с jitter, уважение `Retry-After`; не повторяются 401/403/400.
+- **OpenRouter**: `POST {base_url}/chat/completions`, ключ в `Authorization: Bearer`, `response_format` с `json_schema`, если модель подтверждённо поддерживает structured outputs, иначе JSON-режим/инструкция + валидация. Каталог моделей — `GET /models` (контекст и цены сохраняются с `source=provider_api` и датой). Точные поля API сверяются с актуальной документацией OpenRouter при реализации (этап 05).
+- **Ollama**: `POST {base_url}/api/chat` с `format` (JSON-схема), `stream=false`; `GET /api/tags` — список моделей; `GET /api/version` — health. Модели не скачиваются автоматически. Документация явно объясняет: из контейнера `localhost` — это сам контейнер; использовать `http://ollama:11434` (compose profile) или адрес хоста (`host.docker.internal` / IP), разрешённый администратором.
+- HTTP-клиент провайдеров: `follow_redirects=False`, SSRF-guard (THREAT_MODEL §SSRF), лимит размера ответа, таймауты connect/read раздельно, логирование только метаданных (провайдер, модель, длительность, статус, токены) — без тела запроса/ответа.
+- Mock-провайдер (детерминированный, сценарии через фикстуры) используется в тестах и e2e; в production его нельзя выбрать (не регистрируется при `ENV=production`).
+- Каталог моделей динамический: изменения в БД применяются без рестарта; кеш с TTL 30 с + инвалидация при изменении.
+
+## 13. Фоновые задачи
+
+- Очередь в таблице `Job`. Worker в цикле: `SELECT … WHERE status='queued' AND run_after<=now() ORDER BY priority, created_at FOR UPDATE SKIP LOCKED LIMIT 1` → `running`, `lease_expires_at = now()+lease`. Во время выполнения heartbeat продлевает lease.
+- Reaper (в каждом worker'е, раз в минуту): задачи с истёкшим lease → `queued` с `attempts+1` или `dead` после `max_attempts`; соответствующий анализ продолжается с сохранённых чанков.
+- Отмена: `POST /analyses/{id}/cancel` → `cancel_requested_at`, статус `cancelling`; worker проверяет флаг между чанками и перед каждым вызовом LLM, отменяет текущий HTTP-запрос, переводит в `cancelled`. Уже полученные результаты сохраняются, но отчёт не формируется как завершённый.
+- Повтор: `POST /analyses/{id}/retry` для `failed`/`cancelled` — новая задача на том же snapshot, завершённые чанки не пересчитываются. «Запустить заново» с другой моделью — новый `Analysis`.
+- Параллелизм: `WORKER_CONCURRENCY` (по умолчанию 2), лимит на провайдера (`ProviderConfig.max_concurrency`), лимит активных анализов на пользователя.
+- Graceful shutdown: SIGTERM → прекратить взятие задач, дождаться текущего шага (до таймаута), иначе lease истечёт и задачу подберёт другой worker.
+
+## 14. Облачное согласие, хранение и удаление
+
+- Глобальный выключатель `cloud_models_enabled` (Superadmin). При `false` облачные модели не показываются в селекторе и отклоняются сервером.
+- Перед первым облачным анализом пользователь видит текст предупреждения (провайдер, что передаётся — текст фрагментов договора; провайдер может хранить/обрабатывать данные согласно своим условиям; рекомендуется проверить условия). Принятие версии текста → `ConsentRecord`. В каждом облачном анализе — повторный чекбокс в форме и `cloud_consent_at` в `Analysis`.
+- В облако не передаются: имя файла, данные пользователя, метаданные системы — только текст фрагментов и инструкции.
+- Удаление документа (владелец/Superadmin): статус `deleting`, документ сразу исчезает из выдачи; задача `purge_document` удаляет оригиналы, конвертированные файлы, канонический текст, экспорты, а затем строки (версии, страницы, фрагменты, анализы, риски, доказательства) в одной транзакции. В `AuditLog` остаётся только факт удаления: ID документа, SHA-256 оригинала, автор, время. Название документа в аудит не пишется (может быть конфиденциальным).
+- `retention_days` (по умолчанию выключено): ежедневная задача ставит в очередь удаление документов старше срока; включается только Superadmin с подтверждением.
+- Резервные копии содержат удалённые данные до своей ротации — это указывается в документации.
+
+## 15. Логирование и наблюдаемость
+
+- `structlog` JSON в stdout; поля: `ts`, `level`, `event`, `request_id`, `user_id`, `route`, `status`, `duration_ms`, `job_id`, `analysis_id`.
+- Фильтр редактирования: удаляет/маскирует ключи `password`, `token`, `secret`, `api_key`, `authorization`, `cookie`, `text`, `quote`, `content`, `prompt`; заголовки `Authorization`/`Cookie` никогда не логируются. Тест проверяет, что известный пароль, ключ и фрагмент договора не появляются в захваченных логах.
+- Исключения логируются со стектрейсом, но сообщения исключений от парсеров/провайдеров проходят через тот же фильтр и обрезаются.
+- Uvicorn access log отключён — заменён собственным middleware (без query-строк с потенциальными данными).
+
+## 16. Frontend
+
+- React 18 + TypeScript (strict), Vite, Tailwind, React Router, TanStack Query, React Hook Form + Zod, тексты интерфейса — в `i18n/ru.ts`.
+- API-клиент: `credentials: 'include'`, автоматический `X-CSRF-Token`, разбор единого формата ошибок с показом `request_id`.
+- Маршрутизация с проверкой роли — только UX; защиту обеспечивает backend.
+- Страницы: вход/смена пароля, обзор, договоры (список, загрузка drag-and-drop, просмотр текста по страницам/фрагментам), запуск анализа (документ/версия, сторона, категории, глубина, модель, облачное согласие), список анализов, отчёт (фильтры, карточки рисков, переход к фрагменту), экспорт, администрирование (пользователи, провайдеры, модели, настройки, аудит).
+- Без фиктивных данных: пустые состояния с подсказками.
+- CSP: `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'` (Tailwind без inline-скриптов), `frame-ancestors 'none'`.
+- Тесты: Vitest + Testing Library + MSW.
+
+## 17. Экспорт
+
+- PDF — reportlab со встроенным шрифтом с кириллицей (DejaVu/Noto, свободная лицензия), весь пользовательский/модельный текст экранируется перед `Paragraph`. DOCX — python-docx. CSV — UTF-8 с BOM, `;`-разделитель, XLSX — openpyxl.
+- Formula injection: значения, начинающиеся с `=`, `+`, `-`, `@`, `\t`, `\r`, префиксуются `'`; в XLSX значения записываются как строки (`data_type='s'`).
+- Содержимое: название документа, версия, дата, сторона, snapshot модели (без секретов), категории, сводка, риски с цитатами, страницами (с источником страниц), рекомендации, статусы проверки, ограничения и правовая оговорка.
+- Генерация — задачей worker'а; скачивание — `GET /exports/{id}/download` с проверкой прав через анализ → документ; `Content-Disposition: attachment`, `X-Content-Type-Options: nosniff`.
+
+## 18. Тестовая стратегия
+
+| Уровень | Инструменты | Что покрывает |
+|---|---|---|
+| Unit (backend) | pytest | нормализация и сопоставление цитат, чанкинг, валидаторы файлов, SSRF-валидатор, политики RBAC, редактирование логов, formula injection, схемы ответа |
+| Integration (backend) | pytest + реальный PostgreSQL (контейнер или локальный), httpx `ASGITransport`, `respx` для провайдеров | API-эндпоинты, миграции на пустой БД, IDOR-матрица, bootstrap, очередь задач (lease/reaper), конвейер анализа с mock-провайдером, повтор/отмена/идемпотентность |
+| Документы | файлы-фикстуры, генерируемые в тестах (python-docx, PyMuPDF): таблицы, пустые, повреждённые, подмена MIME, zip-bomb, PDF без текста; DOC — только если доступен converter (иначе тест помечается skip с причиной) | |
+| Frontend | Vitest, Testing Library, MSW | вход, загрузка, выбор модели, облачное согласие, фильтры, статусы доказательств, ошибки, ролевые экраны |
+| E2E | Playwright против compose-стека с mock-провайдером (этап 08) | bootstrap → login → upload → extraction → analysis → evidence → export |
+| Качество LLM | небольшой размеченный набор синтетических договоров (без реальных данных), ручной прогон с реальной моделью | точность цитат, доля rejected; не входит в CI |
+| Статический анализ | ruff, mypy (strict для `analysis/`, `security/`), eslint, `tsc --noEmit`, `pip-audit`/`npm audit` | |
+
+Live-проверки OpenRouter/Ollama не входят в CI; если не выполнялись — это указывается в статусе.
+
+## 19. Резервное копирование и восстановление
+
+- Данные: PostgreSQL (`pgdata`) + файловое хранилище (`storage`). Секреты (`.env`, `SECRETS_ENCRYPTION_KEY`) копируются отдельно в secret manager — без ключа шифрования секреты провайдеров в бэкапе не восстановить (это намеренно).
+- Бэкап: `pg_dump -Fc` из контейнера `db` → затем архив `storage` (порядок: сначала БД, затем файлы; файлы, на которые нет ссылок, допустимы, обратное — нет). Скрипты `deploy/backup.sh`, `deploy/restore.sh`. Бэкапы шифруются (например, `age`/`gpg`) и хранятся вне хоста.
+- Восстановление: остановить backend/worker → `pg_restore --clean --if-exists` в пустую БД → распаковать storage → `alembic upgrade head` → запустить → проверить `/api/health/ready`. Процедура проверяется на этапе 08/09 на чистом стенде.
+
+## 20. Production-развёртывание
+
+- Внешний TLS reverse proxy (Caddy/Traefik/nginx) → `frontend`; HSTS; только HTTPS; `Secure` cookies (`COOKIE_SECURE=true` обязателен при `ENV=production`, проверяется при старте).
+- `ENV=production`: debug выключен, OpenAPI скрыт, mock-провайдер недоступен, `SECRET_KEY`/`SECRETS_ENCRYPTION_KEY`/`DATABASE_URL`/`ALLOWED_ORIGINS` обязательны, иначе старт завершается ошибкой.
+- Контейнеры без root, `read_only` где возможно, `cap_drop: ALL`, `no-new-privileges`, лимиты ресурсов, healthchecks, `restart: unless-stopped`.
+- PostgreSQL не публикуется наружу; отдельные роли БД: миграции (DDL) и приложение (DML, без UPDATE/DELETE на `audit_log`).
+- Обновление: бэкап → pull/build → `migrate` → rolling restart backend/worker. Миграции, удаляющие данные, выполняются только после явного согласования и с бэкапом.
+- Ротация секретов: `SECRETS_ENCRYPTION_KEY` поддерживает список ключей (MultiFernet) и команду перешифровки; ключи провайдеров меняются через админку; `SECRET_KEY` ротация инвалидирует сессии (документируется).
+
+## 21. Известные ограничения
+
+- PDF без текстового слоя не поддерживается (нет OCR).
+- Страницы DOCX/DOC приблизительны (разметка Word/LibreOffice), отмечаются источником.
+- Автонумерация пунктов в DOCX определяется только для типовых форматов.
+- Смысловая проверка цитат выполняется моделью-верификатором и не является гарантией; итог требует проверки специалистом.
+- Нормы права, на которые ссылается модель, сервером не проверяются.
+- Облачный провайдер получает переданный текст; условия хранения определяются провайдером.
