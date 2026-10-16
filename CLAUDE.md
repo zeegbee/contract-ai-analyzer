@@ -8,13 +8,15 @@
 - Открытые вопросы решены «по умолчанию» (см. конец `docs/IMPLEMENTATION_PLAN.md`).
 - Кроме промптов есть **дополнительный этап 08A** (автоматические зашифрованные бэкапы с выгрузкой вне сервера, расписание, ротация) — описан в `docs/IMPLEMENTATION_PLAN.md`. Выполняется после 08 и до 09 (или раньше по явной команде пользователя); перед началом уточнить у пользователя значения из таблицы «по умолчанию».
 
-## Текущее состояние (2026-10-16)
-- Ветка `main` (переименована из `master`; удалённых репозиториев нет). Сделаны и закоммичены этапы 00–04 (последний — `Stage 04: document upload and text extraction`).
-- Следующий этап — промпт `05-llm-providers-model-catalog.md`. Ждать, пока пользователь пришлёт его.
-- Заготовки для этапа 05, которые уже есть: ORM `ProviderConfig`/`ModelConfig`/`UserModelPermission`/`ConfigRevision`/`ConsentRecord` (`app/models/catalog.py`, миграция 0001), настройка `SECRETS_ENCRYPTION_KEYS` (список ключей Fernet, проверяется в `app/config.py`), API доступа пользователей к моделям `/users/{id}/model-permissions` (этап 03), коды аудита `model.*`/`provider.updated`/`settings.updated`, `httpx` — уже runtime-зависимость.
+## Текущее состояние (2026-10-17)
+- Ветка `main` (удалённых репозиториев нет). Закоммичены этапы 00–05 (последний — `Stage 05: LLM providers, model catalog, SSRF guard`).
+- Следующий этап — промпт `06-...` (анализ и доказательства). Ждать, пока пользователь пришлёт его.
+- Уроки live-проверки для этапа 06: модели с рассуждением (deepseek-r1) тратят лимит ответа на рассуждение — бюджет вывода с запасом, `output_truncated` обрабатывать; локальная Ollama на CPU отвечает минутами (8B ≈ 200–500 с) — таймауты и повторы чанков планировать с учётом этого; повтор после таймаута начинает генерацию заново.
+- Заготовки для этапа 06 из этапа 05: `services/catalog.resolve_model_for_use(db, user, model_id, purpose=, cloud_consent=)` (права, включение, облако, согласие — коды 404/409), `catalog.config_snapshot(model, provider)` для `Analysis.config_snapshot`, `app.state.llm_factory.build(provider)` → `LLMProvider.generate_structured(StructuredRequest)`, `GenerationParams.from_mapping(model.generation_params, max_output_tokens=model.max_output_tokens)`, `StructuredRequest.structured_output = model.structured_output`; `MockProvider` + `ProviderFactory(override=...)` для тестов. В worker фабрику провайдеров ещё нужно создать (сейчас она только в `app.state` API).
 - Решение владельца: PyMuPDF (AGPL-3.0) остаётся, приложение только для внутреннего использования — `docs/LICENSES.md`.
-- В локальной БД Docker-стека — 4 синтетических документа smoke-теста этапа 04 (владелец `root@example.org`).
+- В локальной БД Docker-стека — 4 синтетических документа smoke-теста этапа 04 (владелец `root@example.org`); облачные модели выключены.
 - Локальный Docker-стек может быть запущен (`docker compose ps`). Локальный Superadmin — `root@example.org`; его текущий пароль не из `.env` (сменён при smoke-тесте) и в репозиторий не пишется — он в локальной памяти Claude или у пользователя. Открывать `http://localhost:8080` или `http://127.0.0.1:8080` (оба в `ALLOWED_ORIGINS`).
+- Live-проверено: Ollama на хосте (`http://host.docker.internal:11434`, deepseek-r1, CPU — медленно) и OpenRouter (ключ владельца введён через UI, `openai/gpt-4o-mini`). В локальной БД провайдеры «Host Ollama» и «OpenRouter» и их модели (`deepseek-r1:latest`, `openai/gpt-4o-mini`) — выключены, `json_schema` подтверждена; облачные модели выключены. Платные запросы к OpenRouter без нужды не делать.
 
 ## С чего начать новую сессию
 1. `docs/IMPLEMENTATION_STATUS.md` — что сделано и проверено, ограничения последнего этапа.
@@ -36,6 +38,7 @@
   - `src/app/session.ts` (`useMe`, `useCurrentUser` — из контекста `RequireAuth`), `src/app/guards.tsx` (`RequireAuth`, `RequireCapability` — только UX), `src/components/ui.tsx` (Button, Field, Notice, PageTitle), API-модули в `src/api/` (zod-схемы ответов).
   - Тесты: MSW + `src/test/auth.ts` (`makeMe(role)`, `serveMe(me|null)`, `readyHandler`); страница входа запрашивает `/api/health/ready` — в тестах нужен обработчик.
 - `backend/app/ingestion/` — приём и извлечение: `formats.py` (сигнатуры, ZIP/OLE-проверки), `pdf.py`, `docx.py` (+`docx_numbering.py`), `assemble.py` (канонический текст, фрагменты, страницы), `pagemap.py` (страницы по рендеру LibreOffice), `sandbox.py` (дочерний процесс с лимитами), `pipeline.py` (задача `extract_document`), `converter_client.py`. API — `app/api/documents.py`, сервис — `app/services/documents.py`, задачи — `app/jobs/handlers/documents.py`. Тестовые документы — `tests/docfactory.py`, `tests/fixtures/contract.doc`.
+- `backend/app/llm/` — слой провайдеров: `base.py` (`LLMProvider`, `StructuredRequest/Result`), `errors.py`, `netguard.py` (SSRF-guard: `GuardedTransport` с pinned IP, `parse_base_url`, `NetworkPolicy`), `http.py` (`ProviderHttp`: таймауты, лимит ответа, `with_retries`), `openrouter.py`, `ollama.py`, `mock.py`, `factory.py` (`ProviderFactory`, `network_policy(cfg)`). Каталог — `app/services/catalog.py` + `app/api/catalog.py` (`/api/admin/providers|models|llm-settings|config-revisions`, `/api/models/available`, `/api/models/{id}/cloud-consent`); секреты — `app/security/secretbox.py` (`SecretBox`, MultiFernet). Тесты провайдеров — `tests/llm_helpers.py` (`FakeResolver`, `Recorder`, `factory()`); в API-тестах сеть подменяется `api.app.state.llm_factory = ProviderFactory(..., transport=MockTransport, resolver=FakeResolver)`.
 - `converter/` — изолированный LibreOffice: `POST /convert?from=doc&to=docx|from=docx&to=pdf`.
 - `compose.yaml` (корень), `compose.dev.yaml` (БД на 127.0.0.1:55432), `deploy/backup.sh|restore.sh`.
 
@@ -45,7 +48,7 @@
 cd backend
 .venv/Scripts/ruff check app tests && .venv/Scripts/ruff format --check app tests
 .venv/Scripts/mypy app tests
-TEST_DATABASE_URL=postgresql+psycopg://cai:devpass@127.0.0.1:55432/cai .venv/Scripts/python -m pytest -q   # ~1 мин, 261 тест
+TEST_DATABASE_URL=postgresql+psycopg://cai:devpass@127.0.0.1:55432/cai .venv/Scripts/python -m pytest -q   # ~1,5 мин, 368 тестов
 # frontend
 cd frontend && npm run typecheck && npx oxlint --deny-warnings src && npx vitest run && npm run build
 # docker
@@ -77,3 +80,7 @@ Integration-тесты API: фикстура `api` (`tests/integration/conftest.
 - Тестовые документы — `tests/docfactory.py` (DOCX через python-docx и «ручной» OOXML, PDF через PyMuPDF `insert_htmlbox` для кириллицы); DOC — только фикстура `tests/fixtures/contract.doc`. Converter в тестах — `httpx.MockTransport`; живой LibreOffice проверяется в Docker.
 - Таймауты конвертации: `LIBREOFFICE_TIMEOUT_SECONDS` (converter, 90) < `CONVERTER_TIMEOUT_SECONDS` (backend, 180) — не путать.
 - В venv backend установлен `pip install -e ".[dev]"` (каталог `*.egg-info` в `.gitignore`).
+- Объект, изменённый через ORM и закоммиченный, перед сериализацией нужно `await db.refresh(obj)` (серверный `updated_at` просрочен → иначе `MissingGreenlet`).
+- Модели с `version_id_col` (`ProviderConfig`, `ModelConfig`): служебные поля статуса (`last_check_*`) обновлять Core-`update()` — без увеличения `version`; изменения конфигурации — через ORM + `ConfigRevision`.
+- HTTP к внешним провайдерам — только через `ProviderHttp`/`GuardedTransport` (SSRF), вне транзакции БД (сначала `commit()` чтения).
+- В API-тестах `async with client` не закрывает клиента (закрывает фикстура `api`) — клиента можно переиспользовать в нескольких блоках.

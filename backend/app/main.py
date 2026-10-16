@@ -7,14 +7,16 @@ from contextlib import asynccontextmanager
 
 from fastapi import APIRouter, FastAPI
 
-from app.api import audit, auth, documents, health, resources, users
+from app.api import audit, auth, catalog, documents, health, resources, users
 from app.config import Settings, get_settings
 from app.db.session import create_engine, create_session_factory
 from app.errors import install_error_handlers
+from app.llm.factory import ProviderFactory
 from app.logging import configure_logging, get_logger
 from app.middleware import RequestContextMiddleware
 from app.security.passwords import PRODUCTION_PARAMS, TEST_PARAMS, PasswordService
 from app.security.rate_limit import LoginRateLimiter
+from app.security.secretbox import SecretBox
 from app.security.sessions import SessionManager
 from app.services.auth import AuthService
 from app.services.bootstrap import log_result, run_bootstrap
@@ -63,6 +65,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.login_limiter = login_limiter
     app.state.auth_service = AuthService(passwords, sessions, login_limiter)
     app.state.user_service = UserService(passwords, sessions, login_limiter)
+    app.state.secret_box = SecretBox(settings.secrets_encryption_keys)
+    app.state.llm_factory = ProviderFactory(app.state.secret_box)
 
     async def _startup_bootstrap() -> None:
         # Ошибка (например, миграции ещё не применены) не мешает старту: readiness покажет состояние.
@@ -83,5 +87,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     api.include_router(audit.router)
     api.include_router(documents.router)
     api.include_router(resources.router)
+    api.include_router(catalog.router)
     app.include_router(api)
     return app

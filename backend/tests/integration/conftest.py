@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
@@ -29,12 +29,15 @@ _PASSWORDS = PasswordService(TEST_PARAMS)
 # Все таблицы, которые затрагивают тесты этапа 03 (CASCADE очищает зависимые).
 _TRUNCATE = text(
     "TRUNCATE users, sessions, login_attempts, audit_log, system_settings, documents, "
-    "provider_configs, jobs, worker_heartbeats CASCADE"
+    "provider_configs, config_revisions, jobs, worker_heartbeats CASCADE"
 )
 
 
 class ApiClient(httpx.AsyncClient):
-    """Клиент, который можно использовать в `async with` и после первого запроса (например, после login)."""
+    """Клиент, который можно использовать в `async with` повторно и после первого запроса (после login).
+
+    Выход из `async with` клиент не закрывает: все клиенты закрывает фикстура `api` в конце теста.
+    """
 
     async def __aenter__(self) -> ApiClient:
         if self._state is ClientState.OPENED:
@@ -42,17 +45,23 @@ class ApiClient(httpx.AsyncClient):
         await super().__aenter__()
         return self
 
+    async def __aexit__(self, *_exc: object) -> None:
+        return None
+
 
 @dataclass
 class ApiEnv:
     app: FastAPI
     settings: Settings
     factory: async_sessionmaker[AsyncSession]
+    clients: list[ApiClient] = field(default_factory=list)
 
     def client(self, *, origin: str | None = ORIGIN) -> ApiClient:
         headers = {"Origin": origin} if origin else {}
         transport = httpx.ASGITransport(app=self.app, client=("203.0.113.10", 50000))
-        return ApiClient(transport=transport, base_url=ORIGIN, headers=headers)
+        client = ApiClient(transport=transport, base_url=ORIGIN, headers=headers)
+        self.clients.append(client)
+        return client
 
     async def create_user(
         self,
@@ -119,5 +128,8 @@ async def api(tmp_path: Any, pg_database_url: str) -> AsyncIterator[ApiEnv]:
     async with factory() as db:
         await db.execute(_TRUNCATE)
         await db.commit()
-    yield ApiEnv(app=app, settings=settings, factory=factory)
+    env = ApiEnv(app=app, settings=settings, factory=factory)
+    yield env
+    for client in env.clients:
+        await client.aclose()
     await app.state.engine.dispose()

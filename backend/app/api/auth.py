@@ -43,6 +43,9 @@ def me_out(user: User) -> MeOut:
             manage_users=policies.is_admin(user),
             view_audit_log=policies.can_view_audit_log(user),
             upload_documents=policies.can_upload_documents(user),
+            manage_models=policies.can_manage_models(user),
+            manage_providers=policies.can_manage_providers(user),
+            manage_llm_settings=policies.can_manage_llm_settings(user),
             assignable_roles=sorted(policies.assignable_roles(user)),
         ),
     )

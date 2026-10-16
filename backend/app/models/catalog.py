@@ -67,11 +67,18 @@ class ModelConfig(UUIDPk, Timestamps, Base):
     # NULL = цена неизвестна; никогда не заполняется предположениями.
     pricing: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Сведения, полученные от провайдера при импорте/проверке (контекст, цены, признаки), с датой.
+    provider_metadata: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     last_tested_at: Mapped[datetime | None] = tz_datetime(nullable=True)
     last_test_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    last_test_error_safe: Mapped[str | None] = mapped_column(String(500), nullable=True)
     version: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("1"))
 
     __mapper_args__ = {"version_id_col": version}  # noqa: RUF012
     __table_args__ = (
         Index("uq_model_configs_provider_external", "provider_config_id", "external_model_id", unique=True),
+        # Не более одной модели по умолчанию (для выбора в форме анализа).
+        Index(
+            "uq_model_configs_single_default", "is_default", unique=True, postgresql_where=text("is_default")
+        ),
     )

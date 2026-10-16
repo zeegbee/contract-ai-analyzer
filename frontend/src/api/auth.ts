@@ -15,6 +15,9 @@ export const meSchema = z.object({
     manage_users: z.boolean(),
     view_audit_log: z.boolean(),
     upload_documents: z.boolean(),
+    manage_models: z.boolean(),
+    manage_providers: z.boolean(),
+    manage_llm_settings: z.boolean(),
     assignable_roles: z.array(roleSchema),
   }),
 })

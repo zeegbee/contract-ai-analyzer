@@ -41,6 +41,11 @@ export function Layout() {
                   {ru.nav.users}
                 </NavLink>
               )}
+              {me.capabilities.manage_models && (
+                <NavLink to="/admin/models" className={linkClass}>
+                  {ru.nav.models}
+                </NavLink>
+              )}
               {me.capabilities.view_audit_log && (
                 <NavLink to="/admin/audit" className={linkClass}>
                   {ru.nav.audit}

@@ -101,3 +101,26 @@ def document_capabilities(
 
 def can_view_audit_log(actor: Actor) -> bool:
     return is_admin(actor)
+
+
+# ------------------------------------------------------------------ провайдеры и модели
+
+
+def can_manage_models(actor: Actor) -> bool:
+    """Модели: добавление, включение, роли, проверка, импорт (Superadmin и Admin)."""
+    return is_admin(actor)
+
+
+def can_manage_providers(actor: Actor) -> bool:
+    """Провайдеры: адрес, ключ, частная сеть, включение — только Superadmin (THREAT_MODEL §4.5)."""
+    return is_superadmin(actor)
+
+
+def can_manage_llm_settings(actor: Actor) -> bool:
+    """Глобальный выключатель облачных моделей и текст предупреждения — только Superadmin."""
+    return is_superadmin(actor)
+
+
+def ensure(allowed: bool) -> None:
+    if not allowed:
+        raise PermissionDenied()

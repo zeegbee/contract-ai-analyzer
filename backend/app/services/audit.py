@@ -42,8 +42,15 @@ class AuditAction(StrEnum):
     # Модели и провайдеры (этап 05)
     model_created = "model.created"
     model_updated = "model.updated"
+    model_deleted = "model.deleted"
+    model_tested = "model.tested"
+    models_imported = "model.imported"
+    provider_created = "provider.created"
     provider_updated = "provider.updated"
+    provider_deleted = "provider.deleted"
+    provider_checked = "provider.checked"
     settings_updated = "settings.updated"
+    cloud_consent_recorded = "llm.cloud_consent_recorded"
     # Документы, анализы, экспорт (этапы 04–07)
     document_uploaded = "document.uploaded"
     document_deleted = "document.deleted"

@@ -1,9 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useState } from 'react'
 import { Link } from 'react-router'
 
 import { fetchMySessions, revokeMySession, revokeOtherSessions } from '../api/auth'
 import { useCurrentUser } from '../app/session'
 import { ErrorNotice } from '../components/ErrorNotice'
+import { type ModelChoice, ModelSelect } from '../components/ModelSelect'
 import { Button, Notice, PageTitle } from '../components/ui'
 import { ru } from '../i18n/ru'
 import { formatDateTime } from '../lib/format'
@@ -18,6 +20,7 @@ export function AccountPage() {
   const revokeOne = useMutation({ mutationFn: revokeMySession, onSuccess: refresh })
   const revokeOthers = useMutation({ mutationFn: revokeOtherSessions, onSuccess: refresh })
   const others = sessions.data?.filter((s) => !s.current).length ?? 0
+  const [model, setModel] = useState<ModelChoice | null>(null)
 
   return (
     <section aria-labelledby="account-title" className="space-y-6">
@@ -33,6 +36,15 @@ export function AccountPage() {
       <Link to="/change-password" className="inline-block text-sm text-blue-700 underline">
         {ru.account.changePassword}
       </Link>
+
+      {me.capabilities.upload_documents && (
+        <section aria-labelledby="available-models-title" className="max-w-2xl space-y-3">
+          <h2 id="available-models-title" className="text-lg font-semibold">
+            {ru.llm.available.title}
+          </h2>
+          <ModelSelect value={model} onChange={setModel} />
+        </section>
+      )}
 
       <section aria-labelledby="sessions-title" className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
