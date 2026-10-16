@@ -1,4 +1,4 @@
-"""Реестр обработчиков задач. Обработчики добавляются на этапах 04–07."""
+"""Реестр обработчиков задач. Обработчики регистрируются в `app.jobs.handlers`."""
 
 from __future__ import annotations
 
@@ -19,6 +19,11 @@ class JobContext:
     storage: LocalStorage
     job_id: str
     attempt: int
+    max_attempts: int = 1
+
+    @property
+    def is_last_attempt(self) -> bool:
+        return self.attempt >= self.max_attempts
 
 
 class JobError(Exception):

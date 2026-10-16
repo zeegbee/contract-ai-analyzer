@@ -18,6 +18,12 @@ x-backend-env: &backend-env
   STORAGE_DIR: /data/storage
   CONVERTER_URL: http://converter:8090
   WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-2}
+  # Загрузка и извлечение. MAX_UPLOAD_MB должен быть меньше client_max_body_size в frontend/nginx.conf (30m).
+  MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-25}
+  MAX_PAGES: ${MAX_PAGES:-500}
+  MAX_PENDING_EXTRACTIONS_PER_USER: ${MAX_PENDING_EXTRACTIONS_PER_USER:-10}
+  EXTRACTION_TIMEOUT_SECONDS: ${EXTRACTION_TIMEOUT_SECONDS:-180}
+  EXTRACTION_MEMORY_MB: ${EXTRACTION_MEMORY_MB:-1024}
 
 x-hardening: &hardening
   read_only: true
@@ -98,11 +104,18 @@ services:
       start_period: 30s
       retries: 3
     stop_grace_period: 60s
+    # Разбор документов идёт в дочерних процессах worker'а (каждый — с RLIMIT_AS = EXTRACTION_MEMORY_MB).
+    mem_limit: 3g
+    pids_limit: 256
     <<: *hardening
 
   converter:
     build: ./converter
     image: contract-ai-analyzer/converter:local
+    environment:
+      LIBREOFFICE_TIMEOUT_SECONDS: ${LIBREOFFICE_TIMEOUT_SECONDS:-90}
+      CONVERTER_QUEUE_WAIT_SECONDS: 60
+      CONVERTER_MAX_INPUT_MB: 60
     networks: [convert]
     tmpfs: ["/tmp:size=512m,mode=1777"]
     mem_limit: 1g

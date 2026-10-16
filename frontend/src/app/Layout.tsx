@@ -30,6 +30,9 @@ export function Layout() {
           <span className="text-base font-semibold">{ru.appName}</span>
           {!me.must_change_password && (
             <nav aria-label={ru.nav.mainNavigation} className="flex flex-wrap gap-4 text-sm">
+              <NavLink to="/documents" className={linkClass}>
+                {ru.nav.documents}
+              </NavLink>
               <NavLink to="/" end className={linkClass}>
                 {ru.nav.status}
               </NavLink>

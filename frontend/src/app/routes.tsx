@@ -5,6 +5,8 @@ import { AuditPage } from '../pages/admin/AuditPage'
 import { UserDetailPage } from '../pages/admin/UserDetailPage'
 import { UsersPage } from '../pages/admin/UsersPage'
 import { ChangePasswordPage } from '../pages/ChangePasswordPage'
+import { DocumentPage } from '../pages/documents/DocumentPage'
+import { DocumentsPage } from '../pages/documents/DocumentsPage'
 import { LoginPage } from '../pages/LoginPage'
 import { NotFoundPage } from '../pages/NotFoundPage'
 import { StatusPage } from '../pages/StatusPage'
@@ -24,6 +26,8 @@ export const routes: RouteObject[] = [
       { index: true, element: <StatusPage /> },
       { path: 'change-password', element: <ChangePasswordPage /> },
       { path: 'account', element: <AccountPage /> },
+      { path: 'documents', element: <DocumentsPage /> },
+      { path: 'documents/:documentId', element: <DocumentPage /> },
       {
         path: 'admin/users',
         element: (

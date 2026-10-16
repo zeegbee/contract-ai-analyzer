@@ -131,6 +131,7 @@ deploy/restore.sh ./backups/<UTC-время> --confirm
 - При `ENV=production`: OpenAPI выключен, ответы содержат HSTS.
 - Контейнеры `backend`, `worker`, `converter`, `frontend` работают без root, с read-only FS, `cap_drop: ALL`, `no-new-privileges`. PostgreSQL не публикуется наружу; сети `data` и `convert` без выхода в интернет.
 - Образ `ollama/ollama:latest` в профиле `ollama` не зафиксирован по версии — для production укажите конкретный тег.
+- **Лицензия PyMuPDF (AGPL-3.0):** развёртывание допустимо для внутренних пользователей организации. Не открывайте доступ внешним пользователям и не передавайте образы третьим лицам, пока не решён вопрос лицензии (коммерческая лицензия Artifex, открытие кода или замена на pypdfium2) — см. [LICENSES.md](LICENSES.md).
 
 ## 8. Зависимости
 
@@ -193,4 +194,33 @@ docker compose logs backend | grep bootstrap      # outcome: created
 
 ### Аудит
 
-Журнал (UI «Журнал аудита», API `/api/admin/audit`, Admin и Superadmin) — append-only таблица `audit_log`: входы и неудачные входы (с IP и причиной, без введённых данных), выход и завершение сессий, смена/сброс пароля, создание пользователей, изменение ролей, блокировка, доступ к моделям, обращение Superadmin к чужим документам. Действия с документами, анализами, экспортом и моделями добавляются на этапах 04–07. Пароли, токены, ключи, тексты и названия договоров в журнал не пишутся.
+Журнал (UI «Журнал аудита», API `/api/admin/audit`, Admin и Superadmin) — append-only таблица `audit_log`: входы и неудачные входы (с IP и причиной, без введённых данных), выход и завершение сессий, смена/сброс пароля, создание пользователей, изменение ролей, блокировка, доступ к моделям, обращение Superadmin к чужим документам; с этапа 04 — загрузка (`document.uploaded`: ID версии, формат, размер, SHA-256), скачивание оригинала, повтор извлечения, выдача/отзыв доступа, удаление документа (`document.deleted`: SHA-256 оригиналов и владелец). Действия с анализами, экспортом и моделями добавляются на этапах 05–07. Пароли, токены, ключи, тексты, названия договоров и имена файлов в журнал не пишутся.
+
+## 10. Документы: загрузка и извлечение текста
+
+### Параметры
+
+| Параметр | По умолчанию | Назначение |
+|---|---|---|
+| `MAX_UPLOAD_MB` | 25 | Максимальный размер файла. Должен быть меньше `client_max_body_size` в `frontend/nginx.conf` (30m) |
+| `MAX_PAGES` | 500 | Максимум страниц (PDF — по файлу; DOCX — по `docProps/app.xml` и рендеру) |
+| `MAX_PENDING_EXTRACTIONS_PER_USER` | 10 | Сколько документов пользователя может одновременно ждать извлечения (дальше — 429) |
+| `EXTRACTION_TIMEOUT_SECONDS` | 180 | Таймаут дочернего процесса разбора (процесс убивается) |
+| `EXTRACTION_MEMORY_MB` | 1024 | `RLIMIT_AS` дочернего процесса разбора |
+| `LIBREOFFICE_TIMEOUT_SECONDS` | 90 | Таймаут LibreOffice в контейнере `converter` (группа процессов убивается) |
+| `CONVERTER_TIMEOUT_SECONDS` | 180 | Таймаут ожидания ответа converter на стороне worker'а; должен быть больше очереди converter (60 с) + `LIBREOFFICE_TIMEOUT_SECONDS` |
+
+### Как это работает
+
+1. `POST /api/documents` (тело — файл, имя — `X-File-Name`, `Idempotency-Key` — для безопасного повтора) — поток пишется во временный файл с лимитом размера и SHA-256; формат определяется по сигнатуре и структуре (PDF `%PDF-`, DOCX — ZIP с `word/document.xml` без макросов, DOC — OLE с потоком `WordDocument`), расширение и `Content-Type` должны совпадать с форматом. Оригинал хранится в `storage/originals/<uuid>` без имени и расширения; выдаётся только через `GET /api/documents/{id}/versions/{vid}/file` (`attachment`, `nosniff`).
+2. Задача `extract_document` в worker: DOC → DOCX через `converter`; разбор PDF/DOCX — в дочернем процессе без секретов в окружении, с таймаутом и лимитами памяти/CPU; для DOCX без сохранённой разметки Word страницы определяются рендером LibreOffice (DOCX → PDF). Результат — канонический текст (`storage/text/<uuid>`), фрагменты и страницы в БД.
+3. Статусы версии: `pending` → `processing` → `ready` | `unsupported_no_text` (скан без текста, OCR нет) | `failed` (код в `extraction_error_code`). Недоступность converter — временная ошибка (повтор задачи); после исчерпания попыток DOC получает `failed`, а DOCX — `ready` без номеров страниц (предупреждение `pages_unavailable`). Неудачное извлечение можно повторить: кнопка в карточке документа или `POST .../retry-extraction`.
+4. Удаление (`DELETE /api/documents/{id}`): документ сразу скрывается (`deleting`), задача `purge_document` удаляет файлы (оригинал, DOCX после конвертации, канонический текст, экспорты), затем строки. В резервных копиях данные остаются до их ротации.
+
+### Диагностика
+
+- Документ долго в `pending`: проверьте worker (`docker compose ps worker`, `docker compose logs worker | grep extraction`) и очередь (`SELECT type, status, attempts, last_error_code FROM jobs ORDER BY created_at DESC LIMIT 20;`).
+- `converter_unavailable` / `converter_busy`: `docker compose ps converter`, `docker compose logs converter` (в логе — только направление, размер, длительность и результат конвертации).
+- `extraction_timeout` / `resource_limit_exceeded`: файл слишком сложный для лимитов; при необходимости увеличьте `EXTRACTION_TIMEOUT_SECONDS` / `EXTRACTION_MEMORY_MB` (и `mem_limit` worker'а в `compose.yaml`).
+- Тексты документов и имена файлов в логи не пишутся; ошибки разбора логируются только кодами.
+

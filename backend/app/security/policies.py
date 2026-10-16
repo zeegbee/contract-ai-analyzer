@@ -11,7 +11,7 @@ from collections.abc import Iterable
 from typing import Protocol
 
 from app.errors import PermissionDenied
-from app.models.enums import UserRole
+from app.models.enums import DocumentPermission, UserRole
 
 ADMIN_ROLES = frozenset({UserRole.superadmin, UserRole.admin})
 # Роли, которые могут загружать документы и запускать анализ.
@@ -83,6 +83,20 @@ def ensure_can_set_active(actor: Actor, target: Actor) -> None:
 
 def can_upload_documents(actor: Actor) -> bool:
     return actor.role in CONTRIBUTOR_ROLES
+
+
+def document_capabilities(
+    actor: Actor, owner_id: object, granted: DocumentPermission | None
+) -> dict[str, bool]:
+    """Флаги для UI. Те же правила, что в SQL-условиях `app.security.scoped` (они и есть защита)."""
+    contributor = actor.role in CONTRIBUTOR_ROLES
+    is_owner = owner_id == actor.id
+    return {
+        "can_manage": is_superadmin(actor) or (contributor and is_owner),
+        "can_share": contributor and is_owner,
+        "can_analyze": is_superadmin(actor)
+        or (contributor and (is_owner or granted is DocumentPermission.analyze)),
+    }
 
 
 def can_view_audit_log(actor: Actor) -> bool:

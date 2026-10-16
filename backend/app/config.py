@@ -70,6 +70,18 @@ class Settings(BaseSettings):
 
     # --- Сервисы ---
     converter_url: str = "http://converter:8090"
+    # Должен превышать ожидание очереди + таймаут конвертации в converter (60 + 90 с по умолчанию).
+    converter_timeout_seconds: int = Field(default=180, ge=10, le=1800)
+
+    # --- Загрузка и извлечение документов ---
+    # Размер ограничивается и в nginx (client_max_body_size) — значения должны быть согласованы.
+    max_upload_mb: int = Field(default=25, ge=1, le=200)
+    max_pages: int = Field(default=500, ge=1, le=10_000)
+    # Не больше N документов одного пользователя в очереди на извлечение (защита от DoS).
+    max_pending_extractions_per_user: int = Field(default=10, ge=1, le=1000)
+    # Извлечение выполняется в дочернем процессе с этими лимитами (RLIMIT_* — только Linux).
+    extraction_timeout_seconds: int = Field(default=180, ge=10, le=3600)
+    extraction_memory_mb: int = Field(default=1024, ge=256, le=16_384)
 
     # --- Сессии и вход ---
     session_idle_minutes: int = Field(default=480, ge=5, le=7 * 24 * 60)

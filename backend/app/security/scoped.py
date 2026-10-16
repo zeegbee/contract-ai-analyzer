@@ -22,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.errors import NotFoundError
 from app.models.analyses import Analysis
-from app.models.documents import Document
+from app.models.documents import Document, DocumentVersion
 from app.models.enums import DocumentPermission, DocumentStatus
 from app.models.system import Export
 from app.models.users import DocumentAccess
@@ -80,6 +80,29 @@ async def get_document_for(
     if document is None:
         raise NotFoundError("Документ не найден", code="document_not_found")
     return document
+
+
+async def get_version_for(
+    session: AsyncSession,
+    actor: Actor,
+    document_id: uuid.UUID,
+    version_id: uuid.UUID,
+    action: DocumentAction = DocumentAction.view,
+) -> tuple[Document, DocumentVersion]:
+    """Версия проверяется через родительский документ из URL: чужая или «не та» версия → 404."""
+    stmt = (
+        select(Document, DocumentVersion)
+        .join(DocumentVersion, DocumentVersion.document_id == Document.id)
+        .where(
+            Document.id == document_id,
+            DocumentVersion.id == version_id,
+            document_access_clause(actor, action),
+        )
+    )
+    row = (await session.execute(stmt)).first()
+    if row is None:
+        raise NotFoundError("Версия документа не найдена", code="version_not_found")
+    return row[0], row[1]
 
 
 async def get_analysis_for(

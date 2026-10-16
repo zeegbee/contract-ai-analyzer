@@ -36,3 +36,6 @@ contract-ai-analyzer-prompts/
 # Backups (содержат конфиденциальные данные)
 backups/
 .data/
+
+# Метаданные установки пакета (pip install -e)
+*.egg-info/

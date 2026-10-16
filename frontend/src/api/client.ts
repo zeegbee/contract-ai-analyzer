@@ -46,20 +46,26 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+/** Ошибка из тела ответа в едином формате backend (используется и для XHR-загрузки файлов). */
+export function apiErrorFromBody(status: number, body: unknown, headerRequestId: string | null): ApiError {
+  const err = isRecord(body) && isRecord(body.error) ? body.error : null
+  const code = err && typeof err.code === 'string' ? err.code : `http_${status}`
+  const message = err && typeof err.message === 'string' ? err.message : UNKNOWN_ERROR_MESSAGE
+  const requestId = err && typeof err.request_id === 'string' ? err.request_id : headerRequestId
+  const details = err && isRecord(err.details) ? err.details : {}
+  return new ApiError(status, code, message, requestId, details)
+}
+
+export const networkError = () => new ApiError(0, 'network_error', NETWORK_ERROR_MESSAGE, null)
+
 async function toApiError(response: Response): Promise<ApiError> {
-  const headerRequestId = response.headers.get('X-Request-ID')
   let body: unknown = null
   try {
     body = await response.json()
   } catch {
     // тело не JSON (например, ответ прокси) — используем общий текст
   }
-  const err = isRecord(body) && isRecord(body.error) ? body.error : null
-  const code = err && typeof err.code === 'string' ? err.code : `http_${response.status}`
-  const message = err && typeof err.message === 'string' ? err.message : UNKNOWN_ERROR_MESSAGE
-  const requestId = err && typeof err.request_id === 'string' ? err.request_id : headerRequestId
-  const details = err && isRecord(err.details) ? err.details : {}
-  return new ApiError(response.status, code, message, requestId, details)
+  return apiErrorFromBody(response.status, body, response.headers.get('X-Request-ID'))
 }
 
 export interface RequestOptions {
@@ -96,7 +102,7 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
     })
   } catch (cause) {
     if (cause instanceof DOMException && cause.name === 'AbortError') throw cause
-    throw new ApiError(0, 'network_error', NETWORK_ERROR_MESSAGE, null)
+    throw networkError()
   }
 
   if (!response.ok && !options.acceptStatuses?.includes(response.status)) {

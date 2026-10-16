@@ -8,9 +8,9 @@
 - Открытые вопросы решены «по умолчанию» (см. конец `docs/IMPLEMENTATION_PLAN.md`).
 - Кроме промптов есть **дополнительный этап 08A** (автоматические зашифрованные бэкапы с выгрузкой вне сервера, расписание, ротация) — описан в `docs/IMPLEMENTATION_PLAN.md`. Выполняется после 08 и до 09 (или раньше по явной команде пользователя); перед началом уточнить у пользователя значения из таблицы «по умолчанию».
 
-## Текущее состояние (2026-10-15)
-- Сделаны и закоммичены этапы 00–03 (последний — `Stage 03: auth, roles, bootstrap, audit`).
-- Следующий этап — промпт `04-document-ingestion.md` (загрузка и извлечение). Ждать, пока пользователь пришлёт его.
+## Текущее состояние (2026-10-16)
+- Закоммичены этапы 00–03. Этап 04 (загрузка и извлечение) выполнен и проверен, ждёт коммита по команде пользователя (`Stage 04: ...`).
+- Следующий этап — промпт `05-llm-providers-model-catalog.md`. Ждать, пока пользователь пришлёт его.
 - Локальный Docker-стек может быть запущен (`docker compose ps`). Локальный Superadmin — `root@example.org`; его текущий пароль не из `.env` (сменён при smoke-тесте) и в репозиторий не пишется — он в локальной памяти Claude или у пользователя. Открывать `http://localhost:8080` или `http://127.0.0.1:8080` (оба в `ALLOWED_ORIGINS`).
 
 ## С чего начать новую сессию
@@ -31,7 +31,8 @@
 - `frontend/` — React 19 + TS strict + Vite + Tailwind 4 + React Router 7 + TanStack Query + Zod; тексты UI в `src/i18n/ru.ts`; nginx-образ.
   - `src/app/session.ts` (`useMe`, `useCurrentUser` — из контекста `RequireAuth`), `src/app/guards.tsx` (`RequireAuth`, `RequireCapability` — только UX), `src/components/ui.tsx` (Button, Field, Notice, PageTitle), API-модули в `src/api/` (zod-схемы ответов).
   - Тесты: MSW + `src/test/auth.ts` (`makeMe(role)`, `serveMe(me|null)`, `readyHandler`); страница входа запрашивает `/api/health/ready` — в тестах нужен обработчик.
-- `converter/` — изолированный LibreOffice (пока только `/health`; `/convert` → 501 до этапа 04).
+- `backend/app/ingestion/` — приём и извлечение: `formats.py` (сигнатуры, ZIP/OLE-проверки), `pdf.py`, `docx.py` (+`docx_numbering.py`), `assemble.py` (канонический текст, фрагменты, страницы), `pagemap.py` (страницы по рендеру LibreOffice), `sandbox.py` (дочерний процесс с лимитами), `pipeline.py` (задача `extract_document`), `converter_client.py`. API — `app/api/documents.py`, сервис — `app/services/documents.py`, задачи — `app/jobs/handlers/documents.py`. Тестовые документы — `tests/docfactory.py`, `tests/fixtures/contract.doc`.
+- `converter/` — изолированный LibreOffice: `POST /convert?from=doc&to=docx|from=docx&to=pdf`.
 - `compose.yaml` (корень), `compose.dev.yaml` (БД на 127.0.0.1:55432), `deploy/backup.sh|restore.sh`.
 
 ## Команды проверки

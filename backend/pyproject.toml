@@ -14,14 +14,21 @@ dependencies = [
     "structlog>=25.1",
     "cryptography>=45",
     "argon2-cffi>=25.1",
+    "httpx>=0.28",
+    # Разбор PDF. Лицензия AGPL-3.0 (или коммерческая): только внутреннее использование — см. docs/LICENSES.md.
+    "pymupdf>=1.26",
+    "lxml>=5.3",
+    "olefile>=0.47",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8.4",
     "pytest-asyncio>=1.1",
-    "httpx>=0.28",
     "ruff>=0.12",
+    # Генерация DOCX-фикстур в тестах (в приложении DOCX читается напрямую через zipfile + lxml).
+    "python-docx>=1.2",
+    "lxml-stubs>=0.5",
     "mypy>=1.17",
 ]
 
@@ -54,10 +61,12 @@ select = ["E", "F", "W", "I", "B", "UP", "S", "ASYNC", "RUF", "SIM", "PL"]
 ignore = ["PLR0911", "PLR0913", "PLR2004", "RUF001", "RUF002", "RUF003", "S101"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S", "PLR0915", "PLC0415"]
+"tests/**" = ["S", "PLR0915", "PLC0415", "PLR0917"]
 "app/db/migrations/**" = ["E501"]
 # Эндпоинты FastAPI получают зависимости параметрами — их естественно больше пяти.
 "app/api/**" = ["PLR0917"]
+# Разбор форматов документов естественно ветвится по типам элементов.
+"app/ingestion/**" = ["PLR0912"]
 
 [tool.mypy]
 python_version = "3.13"
@@ -66,6 +75,17 @@ plugins = ["pydantic.mypy"]
 exclude = ["app/db/migrations/versions/"]
 
 [[tool.mypy.overrides]]
+module = ["olefile"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# PyMuPDF не размечен типами полностью.
+module = ["app.ingestion.pdf"]
+disallow_untyped_calls = false
+
+[[tool.mypy.overrides]]
 module = ["tests.*"]
 disallow_untyped_defs = false
+# Генерация фикстур через PyMuPDF (API не размечен типами).
+disallow_untyped_calls = false
 disallow_incomplete_defs = false

@@ -19,13 +19,16 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.aio import run
 from app.config import ConfigurationError, Settings, get_settings
 from app.db.session import create_engine, create_session_factory
-from app.jobs import queue
+from app.jobs import handlers, queue
 from app.jobs.registry import JobContext, JobError, get_handler
 from app.logging import bind_context, clear_context, configure_logging, get_logger
 from app.models.system import WorkerHeartbeat
 from app.storage import LocalStorage
 
 log = get_logger("app.worker")
+
+# Регистрация обработчиков задач (импорт ради побочного эффекта @register).
+_ = handlers
 
 REAP_INTERVAL_S = 60
 HEARTBEAT_STALE_S = 90
@@ -110,6 +113,7 @@ class Worker:
             storage=self.storage,
             job_id=str(job.id),
             attempt=job.attempts,
+            max_attempts=job.max_attempts,
         )
         beat = asyncio.create_task(self._job_heartbeat(job))
         started = time.perf_counter()

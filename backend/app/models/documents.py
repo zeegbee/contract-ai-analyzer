@@ -34,6 +34,18 @@ class Document(UUIDPk, Timestamps, Base):
         ForeignKey("document_versions.id", ondelete="SET NULL", use_alter=True),
         nullable=True,
     )
+    # Idempotency-Key загрузки: повтор запроса после обрыва связи возвращает тот же документ.
+    upload_idempotency_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
+    __table_args__ = (
+        Index(
+            "uq_documents_owner_upload_idempotency_key",
+            "owner_id",
+            "upload_idempotency_key",
+            unique=True,
+            postgresql_where=sql_text("upload_idempotency_key IS NOT NULL"),
+        ),
+    )
 
 
 class DocumentVersion(UUIDPk, Timestamps, Base):

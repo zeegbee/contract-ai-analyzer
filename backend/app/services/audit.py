@@ -50,6 +50,8 @@ class AuditAction(StrEnum):
     document_access_granted = "document.access_granted"
     document_access_revoked = "document.access_revoked"
     document_accessed_by_superadmin = "document.accessed_by_superadmin"
+    document_file_downloaded = "document.file_downloaded"
+    document_extraction_retried = "document.extraction_retried"
     analysis_started = "analysis.started"
     analysis_cancelled = "analysis.cancelled"
     export_created = "export.created"

@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import io
 import os
 import re
@@ -21,6 +22,56 @@ _CHUNK = 1024 * 1024
 
 class StorageError(Exception):
     pass
+
+
+class AtomicWriter:
+    """Запись во временный `.part`-файл с подсчётом SHA-256 и лимитом размера.
+
+    `commit()` — fsync и атомарное переименование; `abort()` — удаление временного файла.
+    До `commit()` файл доступен для проверки по `tmp_path`.
+    """
+
+    def __init__(self, target: Path, max_bytes: int | None) -> None:
+        self.target = target
+        self.tmp_path = target.with_name(f".{target.name}.{uuid.uuid4().hex}.part")
+        self.max_bytes = max_bytes
+        self.size = 0
+        self._hash = hashlib.sha256()
+        fd = os.open(self.tmp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o600)
+        self._file: BinaryIO | None = os.fdopen(fd, "wb")
+
+    @property
+    def sha256(self) -> str:
+        return self._hash.hexdigest()
+
+    def write(self, chunk: bytes) -> None:
+        if self._file is None:
+            raise StorageError("writer_closed")
+        self.size += len(chunk)
+        if self.max_bytes is not None and self.size > self.max_bytes:
+            self.abort()
+            raise StorageError("file_too_large")
+        self._hash.update(chunk)
+        self._file.write(chunk)
+
+    def close(self) -> None:
+        """Закрывает файл (данные на диске), но не публикует его под целевым ключом."""
+        if self._file is not None:
+            self._file.flush()
+            os.fsync(self._file.fileno())
+            self._file.close()
+            self._file = None
+
+    def commit(self) -> None:
+        self.close()
+        os.replace(self.tmp_path, self.target)
+
+    def abort(self) -> None:
+        if self._file is not None:
+            self._file.close()
+            self._file = None
+        with contextlib.suppress(FileNotFoundError):
+            self.tmp_path.unlink()
 
 
 class StorageBackend(Protocol):
@@ -82,8 +133,33 @@ class LocalStorage:
     def write_bytes(self, key: str, data: bytes) -> int:
         return self.write_stream(key, io.BytesIO(data))
 
+    def writer(self, key: str, *, max_bytes: int | None = None) -> AtomicWriter:
+        """Потоковая запись по частям: файл появляется под `key` только после `commit()`."""
+        target = self._path(key)
+        target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        return AtomicWriter(target, max_bytes)
+
     def open(self, key: str) -> BinaryIO:
         return self._path(key).open("rb")
+
+    def local_path(self, key: str) -> Path:
+        """Путь к файлу для чтения дочерним процессом извлечения (ключ проверяется)."""
+        return self._path(key)
+
+    def output_path(self, key: str) -> Path:
+        """Путь для записи результата внешним инструментом (каталог создаётся, ключ проверяется)."""
+        path = self._path(key)
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        return path
+
+    def move(self, src_key: str, dst_key: str) -> None:
+        """Атомарное переименование внутри хранилища (оба ключа проверяются)."""
+        src, dst = self._path(src_key), self._path(dst_key)
+        dst.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        os.replace(src, dst)
+
+    def size(self, key: str) -> int:
+        return self._path(key).stat().st_size
 
     def exists(self, key: str) -> bool:
         return self._path(key).is_file()
