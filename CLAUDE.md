@@ -9,8 +9,11 @@
 - Кроме промптов есть **дополнительный этап 08A** (автоматические зашифрованные бэкапы с выгрузкой вне сервера, расписание, ротация) — описан в `docs/IMPLEMENTATION_PLAN.md`. Выполняется после 08 и до 09 (или раньше по явной команде пользователя); перед началом уточнить у пользователя значения из таблицы «по умолчанию».
 
 ## Текущее состояние (2026-10-16)
-- Закоммичены этапы 00–03. Этап 04 (загрузка и извлечение) выполнен и проверен, ждёт коммита по команде пользователя (`Stage 04: ...`).
+- Ветка `main` (переименована из `master`; удалённых репозиториев нет). Сделаны и закоммичены этапы 00–04 (последний — `Stage 04: document upload and text extraction`).
 - Следующий этап — промпт `05-llm-providers-model-catalog.md`. Ждать, пока пользователь пришлёт его.
+- Заготовки для этапа 05, которые уже есть: ORM `ProviderConfig`/`ModelConfig`/`UserModelPermission`/`ConfigRevision`/`ConsentRecord` (`app/models/catalog.py`, миграция 0001), настройка `SECRETS_ENCRYPTION_KEYS` (список ключей Fernet, проверяется в `app/config.py`), API доступа пользователей к моделям `/users/{id}/model-permissions` (этап 03), коды аудита `model.*`/`provider.updated`/`settings.updated`, `httpx` — уже runtime-зависимость.
+- Решение владельца: PyMuPDF (AGPL-3.0) остаётся, приложение только для внутреннего использования — `docs/LICENSES.md`.
+- В локальной БД Docker-стека — 4 синтетических документа smoke-теста этапа 04 (владелец `root@example.org`).
 - Локальный Docker-стек может быть запущен (`docker compose ps`). Локальный Superadmin — `root@example.org`; его текущий пароль не из `.env` (сменён при smoke-тесте) и в репозиторий не пишется — он в локальной памяти Claude или у пользователя. Открывать `http://localhost:8080` или `http://127.0.0.1:8080` (оба в `ALLOWED_ORIGINS`).
 
 ## С чего начать новую сессию
@@ -26,7 +29,8 @@
   - `app/security/` — `passwords.py` (Argon2id, политика), `sessions.py` (сессии/cookie/CSRF), `rate_limit.py`, `policies.py` (RBAC — единственное место правил ролей), `scoped.py` (`get_document_for/get_analysis_for/get_export_for` — условие доступа в SQL, 404 для чужого).
   - `app/services/` — `auth.py`, `users.py` (админ-изменения через `begin_admin_change`: advisory lock + перечитывание актора), `bootstrap.py`, `audit.py` (`record(db, AuditAction.x, ...)` в той же транзакции; коды для этапов 04–07 уже есть: `document.uploaded`, `document.deleted`, `analysis.started`, `export.downloaded`, `model.updated` и др.).
   - `app/api/deps.py` — зависимости: `Db`, `Auth` (проверка сессии + CSRF для изменяющих методов + `must_change_password`), `AuthPasswordChange`, `AdminAuth`. Новые эндпоинты: всегда через `Auth`/`AdminAuth`, объекты — только через `scoped.py`.
-  - `app/api/resources.py` — пока read-only метаданные `/documents`, `/analyses/{id}`, `/exports/{id}`; этап 04+ расширяет их. Доступ Superadmin к чужому документу аудируется (`document.accessed_by_superadmin`).
+  - `app/api/documents.py` — документы (загрузка, текст, файл, удаление, доступ); `app/api/resources.py` — пока read-only `/analyses/{id}`, `/exports/{id}` (расширяются на этапах 06–07). Доступ Superadmin к чужому документу аудируется (`document.accessed_by_superadmin`); `scoped.get_version_for` проверяет версию через документ из URL.
+  - `app/jobs/handlers/` — обработчики задач; регистрируются импортом в `handlers/__init__.py` (worker импортирует пакет). Новый тип задачи — добавить модуль туда.
   - `app/schemas/` — Pydantic DTO; `app/cli.py` — `python -m app.cli bootstrap`.
 - `frontend/` — React 19 + TS strict + Vite + Tailwind 4 + React Router 7 + TanStack Query + Zod; тексты UI в `src/i18n/ru.ts`; nginx-образ.
   - `src/app/session.ts` (`useMe`, `useCurrentUser` — из контекста `RequireAuth`), `src/app/guards.tsx` (`RequireAuth`, `RequireCapability` — только UX), `src/components/ui.tsx` (Button, Field, Notice, PageTitle), API-модули в `src/api/` (zod-схемы ответов).
@@ -41,7 +45,7 @@
 cd backend
 .venv/Scripts/ruff check app tests && .venv/Scripts/ruff format --check app tests
 .venv/Scripts/mypy app tests
-TEST_DATABASE_URL=postgresql+psycopg://<user>:<pw>@127.0.0.1:<port>/<db> .venv/Scripts/python -m pytest -q
+TEST_DATABASE_URL=postgresql+psycopg://cai:devpass@127.0.0.1:55432/cai .venv/Scripts/python -m pytest -q   # ~1 мин, 261 тест
 # frontend
 cd frontend && npm run typecheck && npx oxlint --deny-warnings src && npx vitest run && npm run build
 # docker
@@ -65,3 +69,11 @@ Integration-тесты API: фикстура `api` (`tests/integration/conftest.
 - Heredoc в Git Bash портит `\` — TS/py-файлы с обратными слэшами писать через Write/Edit.
 - `ALLOWED_ORIGINS` должен точно совпадать с адресом в браузере; отказ виден в логе backend как `csrf_rejected`.
 - Локальный `.env` создан со случайными секретами и не коммитится.
+- Сессии БД: `expire_on_commit=False`, но `rollback()` «просрочивает» загруженные объекты (в т.ч. `auth.user`) → `MissingGreenlet`. Чтобы закрыть транзакцию только чтения посреди запроса, используй `commit()`.
+- `asyncio.create_subprocess_exec` не работает на SelectorEventLoop (Windows-тесты) — подпроцессы запускать через `subprocess` в `asyncio.to_thread` (как `ingestion/sandbox.py`).
+- Дочерний процесс разбора запускается с `-E` (PYTHON* игнорируются) — вывод пишется в `sys.stdout.buffer` явно в UTF-8.
+- Правки с кириллицей через `python - <<EOF` в Git Bash иногда портят текст — для таких правок используй Edit/Write; после массовых правок проверяй `grep -c $'ï¿½'`.
+- Хранилище: ключи только `originals|converted|text|exports|tmp/<hex>`; путь для записи внешним инструментом — `storage.output_path(key)` (создаёт каталог). В тестах lifespan не запускается, каталоги storage сами не создаются.
+- Тестовые документы — `tests/docfactory.py` (DOCX через python-docx и «ручной» OOXML, PDF через PyMuPDF `insert_htmlbox` для кириллицы); DOC — только фикстура `tests/fixtures/contract.doc`. Converter в тестах — `httpx.MockTransport`; живой LibreOffice проверяется в Docker.
+- Таймауты конвертации: `LIBREOFFICE_TIMEOUT_SECONDS` (converter, 90) < `CONVERTER_TIMEOUT_SECONDS` (backend, 180) — не путать.
+- В venv backend установлен `pip install -e ".[dev]"` (каталог `*.egg-info` в `.gitignore`).
