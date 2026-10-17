@@ -61,6 +61,7 @@ class AuditAction(StrEnum):
     document_extraction_retried = "document.extraction_retried"
     analysis_started = "analysis.started"
     analysis_cancelled = "analysis.cancelled"
+    analysis_retried = "analysis.retried"
     export_created = "export.created"
     export_downloaded = "export.downloaded"
 

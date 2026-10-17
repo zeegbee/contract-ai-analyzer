@@ -76,9 +76,15 @@ class Analysis(UUIDPk, Timestamps, Base):
     started_at: Mapped[datetime | None] = tz_datetime(nullable=True)
     finished_at: Mapped[datetime | None] = tz_datetime(nullable=True)
     cancel_requested_at: Mapped[datetime | None] = tz_datetime(nullable=True)
+    # Результаты этапов вне чанков (структура, межраздельный проход, отметки этапов) — для продолжения
+    # после сбоя. Содержит фрагменты ответа модели: наружу отдаётся только через схемы API.
+    stage_results: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
 
     __table_args__ = (
         UniqueConstraint("created_by_id", "idempotency_key"),
+        Index("ix_analyses_created_by_id_status", "created_by_id", "status"),
         CheckConstraint(
             "NOT cloud_transfer OR cloud_consent_at IS NOT NULL", name="cloud_transfer_requires_consent"
         ),
@@ -188,6 +194,8 @@ class RiskEvidence(UUIDPk, CreatedAt, Base):
     relevance_rationale: Mapped[str | None] = mapped_column(Text, nullable=True)
     relevance_checked_by: Mapped[str | None] = mapped_column(String(32), nullable=True)
     verifier_model_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    # 0 — доказательство из анализа; 1 — из повторного запроса точной цитаты (заменяет попытку 0).
+    attempt: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
 
     __table_args__ = (
         CheckConstraint(

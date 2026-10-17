@@ -1,7 +1,7 @@
-"""Чтение метаданных анализов и экспортов с проверкой доступа (документы — `app.api.documents`).
+"""Чтение метаданных экспортов с проверкой доступа (анализы — `app.api.analyses`).
 
-Запуск анализа и экспорт появятся на этапах 06–07; здесь — только чтение, чтобы права доступа
-(scoped-запросы, 404 для чужих объектов) действовали с самого начала.
+Экспорт появится на этапе 07; здесь — только чтение, чтобы права доступа (scoped-запросы,
+404 для чужих объектов) действовали с самого начала.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import Auth, AuthContext, Db
 from app.models.documents import Document
-from app.models.enums import AnalysisStatus, ExportFormat, ExportStatus
+from app.models.enums import ExportFormat, ExportStatus
 from app.security.scoped import (
     DocumentAction,
     get_analysis_for,
@@ -26,14 +26,6 @@ from app.security.scoped import (
 from app.services.audit import AuditAction, record
 
 router = APIRouter(tags=["documents"])
-
-
-class AnalysisOut(BaseModel):
-    id: uuid.UUID
-    document_id: uuid.UUID
-    version_id: uuid.UUID
-    status: AnalysisStatus
-    created_at: datetime
 
 
 class ExportOut(BaseModel):
@@ -56,20 +48,6 @@ async def _audit_superadmin_access(db: AsyncSession, auth: AuthContext, document
             details={"via": via},
         )
         await db.commit()
-
-
-@router.get("/analyses/{analysis_id}")
-async def get_analysis(analysis_id: uuid.UUID, auth: Auth, db: Db) -> AnalysisOut:
-    analysis = await get_analysis_for(db, auth.user, analysis_id)
-    document = await get_document_for(db, auth.user, analysis.document_id, DocumentAction.view)
-    await _audit_superadmin_access(db, auth, document, "analysis")
-    return AnalysisOut(
-        id=analysis.id,
-        document_id=analysis.document_id,
-        version_id=analysis.version_id,
-        status=analysis.status,
-        created_at=analysis.created_at,
-    )
 
 
 @router.get("/exports/{export_id}")

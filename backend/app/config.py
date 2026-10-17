@@ -83,6 +83,19 @@ class Settings(BaseSettings):
     extraction_timeout_seconds: int = Field(default=180, ge=10, le=3600)
     extraction_memory_mb: int = Field(default=1024, ge=256, le=16_384)
 
+    # --- Анализ договоров ---
+    # Верхний предел токенов (вход + выход) на один анализ: проверяется по оценке при запуске
+    # и по фактическому расходу (если провайдер его сообщает) во время выполнения.
+    analysis_max_tokens: int = Field(default=1_500_000, ge=10_000, le=100_000_000)
+    analysis_max_active_per_user: int = Field(default=3, ge=1, le=100)
+    # Лимит ответа модели, если в каталоге он не задан. Модели с рассуждением тратят его и на
+    # рассуждение — задавайте лимит модели с запасом.
+    analysis_default_max_output_tokens: int = Field(default=8192, ge=512, le=200_000)
+    # Не больше N повторных запросов точной цитаты на анализ.
+    analysis_quote_retry_limit: int = Field(default=30, ge=0, le=1000)
+    # Как часто во время вызова модели проверяется запрос отмены.
+    analysis_cancel_poll_seconds: float = Field(default=2.0, gt=0, le=60)
+
     # --- Сессии и вход ---
     session_idle_minutes: int = Field(default=480, ge=5, le=7 * 24 * 60)
     session_absolute_hours: int = Field(default=168, ge=1, le=90 * 24)

@@ -4,12 +4,15 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.config import Settings
 from app.storage import LocalStorage
+
+if TYPE_CHECKING:
+    from app.llm.factory import ProviderFactory
 
 
 @dataclass(slots=True)
@@ -20,6 +23,8 @@ class JobContext:
     job_id: str
     attempt: int
     max_attempts: int = 1
+    # Провайдеры LLM (задачи анализа); в тестах — фабрика с mock-провайдером.
+    llm_factory: ProviderFactory | None = None
 
     @property
     def is_last_attempt(self) -> bool:

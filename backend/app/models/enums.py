@@ -88,6 +88,27 @@ class RiskKind(StrEnum):
     contradiction = "contradiction"
 
 
+class RiskCategory(StrEnum):
+    payment = "payment"
+    liability = "liability"
+    penalties = "penalties"
+    deadlines = "deadlines"
+    renewal = "renewal"
+    termination = "termination"
+    unilateral_changes = "unilateral_changes"
+    warranties = "warranties"
+    confidentiality = "confidentiality"
+    personal_data = "personal_data"
+    intellectual_property = "intellectual_property"
+    governing_law = "governing_law"
+    force_majeure = "force_majeure"
+    acceptance = "acceptance"
+    undefined_terms = "undefined_terms"
+    contradiction = "contradiction"
+    missing_clause = "missing_clause"
+    other = "other"
+
+
 class RiskSeverity(StrEnum):
     critical = "critical"
     high = "high"

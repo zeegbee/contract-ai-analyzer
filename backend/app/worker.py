@@ -21,8 +21,11 @@ from app.config import ConfigurationError, Settings, get_settings
 from app.db.session import create_engine, create_session_factory
 from app.jobs import handlers, queue
 from app.jobs.registry import JobContext, JobError, get_handler
+from app.llm.factory import ProviderFactory
 from app.logging import bind_context, clear_context, configure_logging, get_logger
 from app.models.system import WorkerHeartbeat
+from app.security.secretbox import SecretBox
+from app.services.analyses import reconcile_orphans
 from app.storage import LocalStorage
 
 log = get_logger("app.worker")
@@ -35,9 +38,16 @@ HEARTBEAT_STALE_S = 90
 
 
 class Worker:
-    def __init__(self, settings: Settings, session_factory: async_sessionmaker[AsyncSession]) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        session_factory: async_sessionmaker[AsyncSession],
+        llm_factory: ProviderFactory | None = None,
+    ) -> None:
         self.settings = settings
         self.session_factory = session_factory
+        # Ключ провайдера расшифровывается только при создании клиента (app.llm.factory).
+        self.llm_factory = llm_factory or ProviderFactory(SecretBox(settings.secrets_encryption_keys))
         self.storage = LocalStorage(settings.storage_dir)
         self.worker_id = f"{socket.gethostname()}-{os.getpid()}-{uuid.uuid4().hex[:6]}"
         self.stopping = asyncio.Event()
@@ -66,6 +76,10 @@ class Worker:
                         reaped = await queue.reap_expired(session)
                     if reaped:
                         log.warning("jobs_reaped", count=reaped)
+                    async with self.session_factory() as session:
+                        orphans = await reconcile_orphans(session)
+                    if orphans:
+                        log.warning("analyses_without_job_closed", count=orphans)
                     last_reap = time.monotonic()
             except Exception as exc:
                 log.warning("housekeeping_failed", exc_type=type(exc).__name__)
@@ -114,6 +128,7 @@ class Worker:
             job_id=str(job.id),
             attempt=job.attempts,
             max_attempts=job.max_attempts,
+            llm_factory=self.llm_factory,
         )
         beat = asyncio.create_task(self._job_heartbeat(job))
         started = time.perf_counter()

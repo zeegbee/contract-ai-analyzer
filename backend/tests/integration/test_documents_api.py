@@ -560,8 +560,11 @@ async def test_shared_access_and_superadmin_audit(api: ApiEnv, tmp_path: Path) -
 
 
 async def test_document_text_is_not_logged(
-    api: ApiEnv, analyst: tuple[User, ApiClient], tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    api: ApiEnv, analyst: tuple[User, ApiClient], tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
+    # caplog, а не capsys: поток вывода structlog задан при настройке логирования, и capsys его не
+    # перехватывает (проверка была бы пустой). caplog видит события до редактирования — строже.
+    caplog.set_level("DEBUG")
     _, client = analyst
     secret = "Уникальнаяфразадоговора"
     doc_id, version_id = await uploaded(
@@ -569,9 +572,10 @@ async def test_document_text_is_not_logged(
     )
     await extract(api, version_id)
     await fragments(client, doc_id, version_id)
-    captured = capsys.readouterr()
-    assert secret not in captured.out + captured.err
-    assert "Тайна" not in captured.out + captured.err
+    logs = caplog.text
+    assert "http_request" in logs
+    assert secret not in logs
+    assert "Тайна" not in logs
     audit = await api.rows("SELECT details::text FROM audit_log")
     assert all(secret not in row[0] and "Тайна" not in row[0] for row in audit)
 
