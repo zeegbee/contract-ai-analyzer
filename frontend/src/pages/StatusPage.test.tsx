@@ -15,7 +15,7 @@ describe('StatusPage', () => {
         HttpResponse.json({ status: 'ready', checks: { database: 'ok', migrations: 'ok', storage: 'ok' }, version: '0.1.0' }),
       ),
     )
-    renderRoute('/')
+    renderRoute('/status')
     expect(await screen.findByText('Все сервисы готовы к работе')).toBeInTheDocument()
     expect(screen.getByText('База данных')).toBeInTheDocument()
     expect(screen.getAllByText('в порядке')).toHaveLength(3)
@@ -30,7 +30,7 @@ describe('StatusPage', () => {
         ),
       ),
     )
-    renderRoute('/')
+    renderRoute('/status')
     expect(await screen.findByText(/задайте BOOTSTRAP_ADMIN_/)).toBeInTheDocument()
   })
 
@@ -43,7 +43,7 @@ describe('StatusPage', () => {
         ),
       ),
     )
-    renderRoute('/')
+    renderRoute('/status')
     expect(await screen.findByText('Часть сервисов недоступна')).toBeInTheDocument()
     expect(screen.getByText('недоступно')).toBeInTheDocument()
   })
@@ -57,14 +57,14 @@ describe('StatusPage', () => {
         ),
       ),
     )
-    renderRoute('/')
+    renderRoute('/status')
     expect(await screen.findByRole('alert')).toHaveTextContent('Внутренняя ошибка сервера')
     expect(screen.getByText('rid-42')).toBeInTheDocument()
   })
 
   it('всегда показывает правовую оговорку', async () => {
     server.use(http.get('*/api/health/ready', () => HttpResponse.json({ status: 'ready', checks: {}, version: '0.1.0' })))
-    renderRoute('/')
+    renderRoute('/status')
     expect(await screen.findByText(/не заменяют консультацию юриста/)).toBeInTheDocument()
   })
 })

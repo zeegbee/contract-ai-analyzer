@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 
 import { safeNextPath } from '../app/session'
 import { makeMe, readyHandler, serveMe } from '../test/auth'
+import { emptyOverviewHandlers } from '../test/handlers'
 import { renderRoute } from '../test/render'
 import { server } from '../test/server'
 
@@ -123,6 +124,7 @@ describe('принудительная смена пароля', () => {
         return HttpResponse.json(updated)
       }),
       readyHandler,
+      ...emptyOverviewHandlers,
     )
     renderRoute('/change-password')
     const user = userEvent.setup()
@@ -130,7 +132,7 @@ describe('принудительная смена пароля', () => {
     await user.type(screen.getByLabelText('Новый пароль'), 'Saffron-Glacier-Willow-37')
     await user.type(screen.getByLabelText('Повторите новый пароль'), 'Saffron-Glacier-Willow-37')
     await user.click(screen.getByRole('button', { name: 'Сменить пароль' }))
-    expect(await screen.findByRole('heading', { name: 'Состояние системы' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Обзор' })).toBeInTheDocument()
     expect(body).toEqual({ current_password: 'Temp-Password-111', new_password: 'Saffron-Glacier-Willow-37' })
   })
 
@@ -187,6 +189,7 @@ describe('сессия и выход', () => {
         serveMe(null)
         return new HttpResponse(null, { status: 204 })
       }),
+      ...emptyOverviewHandlers,
     )
     renderRoute('/')
     await userEvent.setup().click(await screen.findByRole('button', { name: 'Выйти' }))

@@ -1,5 +1,5 @@
 import { useInfiniteQuery } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 import { DOCUMENTS_KEY, fetchFragments, type Fragment, type PageSource } from '../../api/documents'
 import { ErrorNotice } from '../../components/ErrorNotice'
@@ -43,11 +43,15 @@ interface Props {
   versionId: string
   pageCount: number | null
   pageSource: PageSource | null
+  /** Фрагмент, к которому нужно перейти (из карточки риска), и его страница. */
+  focusKey?: string | null
+  focusPage?: number | null
 }
 
-export function TextViewer({ documentId, versionId, pageCount, pageSource }: Props) {
+export function TextViewer({ documentId, versionId, pageCount, pageSource, focusKey = null, focusPage = null }: Props) {
   const hasPages = pageSource !== null && pageCount !== null && pageCount > 0
-  const [page, setPage] = useState<number | null>(hasPages ? 1 : null)
+  const initialPage = focusKey ? (focusPage ?? null) : 1
+  const [page, setPage] = useState<number | null>(hasPages ? initialPage : null)
 
   const query = useInfiniteQuery({
     queryKey: [...DOCUMENTS_KEY, documentId, 'fragments', versionId, page],
@@ -57,6 +61,13 @@ export function TextViewer({ documentId, versionId, pageCount, pageSource }: Pro
   })
   const fragments = query.data?.pages.flatMap((p) => p.items) ?? []
   const total = query.data?.pages[0]?.total ?? 0
+  const focusLoaded = Boolean(focusKey && fragments.some((f) => f.fragment_key === focusKey))
+  useEffect(() => {
+    if (!focusKey || !focusLoaded) return
+    const el = document.getElementById(focusKey)
+    el?.scrollIntoView?.({ block: 'center' })
+    el?.focus({ preventScroll: true })
+  }, [focusKey, focusLoaded])
 
   return (
     <section aria-labelledby="text-title" className="space-y-3 rounded-lg border border-slate-200 bg-white p-4">
@@ -106,7 +117,9 @@ export function TextViewer({ documentId, versionId, pageCount, pageSource }: Pro
               <li
                 key={f.id}
                 id={f.fragment_key}
-                className={`rounded-md border p-2 ${f.kind === 'header_footer' ? 'border-dashed border-slate-200 text-slate-500' : 'border-slate-100'}`}
+                tabIndex={f.fragment_key === focusKey ? -1 : undefined}
+                aria-current={f.fragment_key === focusKey ? 'true' : undefined}
+                className={`rounded-md border p-2 ${f.fragment_key === focusKey ? 'border-amber-400 bg-amber-50 ring-2 ring-amber-300' : f.kind === 'header_footer' ? 'border-dashed border-slate-200 text-slate-500' : 'border-slate-100'}`}
               >
                 <div className="mb-1 flex flex-wrap gap-x-2 text-xs text-slate-500">
                   <code>{f.fragment_key}</code>

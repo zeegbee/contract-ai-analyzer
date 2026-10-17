@@ -1,7 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { ReactNode } from 'react'
-import { Link, useNavigate, useParams } from 'react-router'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router'
 
+import { ANALYSES_KEY, fetchAnalyses } from '../../api/analyses'
 import {
   ACTIVE_STATUSES,
   deleteDocument,
@@ -16,6 +17,7 @@ import { ErrorNotice } from '../../components/ErrorNotice'
 import { Button, Notice, PageTitle } from '../../components/ui'
 import { ru } from '../../i18n/ru'
 import { formatBytes, formatDateTime } from '../../lib/format'
+import { AnalysesTable } from '../analyses/AnalysesTable'
 import { AccessPanel } from './AccessPanel'
 import { StatusBadge } from './StatusBadge'
 import { TextViewer } from './TextViewer'
@@ -73,8 +75,39 @@ function ExtractionState({ version, canManage, onRetry, retrying }: {
   return null
 }
 
+function DocumentAnalyses({ documentId, canAnalyze, ready }: { documentId: string; canAnalyze: boolean; ready: boolean }) {
+  const query = useQuery({
+    queryKey: [...ANALYSES_KEY, 'document', documentId],
+    queryFn: ({ signal }) => fetchAnalyses({ documentId, limit: 20 }, signal),
+  })
+  return (
+    <section aria-labelledby="document-analyses-title" className="space-y-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 id="document-analyses-title" className="text-lg font-semibold">
+          {t.analyses}
+        </h2>
+        {canAnalyze && ready && (
+          <Link
+            to={`/analyses/new?document=${encodeURIComponent(documentId)}`}
+            className="rounded-md border border-blue-700 bg-blue-700 px-3 py-1.5 text-sm text-white hover:bg-blue-800"
+          >
+            {t.startAnalysis}
+          </Link>
+        )}
+      </div>
+      {query.isError && <ErrorNotice error={query.error} onRetry={() => void query.refetch()} />}
+      {query.isSuccess && query.data.items.length === 0 && <p className="text-sm text-slate-600">{t.noAnalyses}</p>}
+      {query.data && query.data.items.length > 0 && <AnalysesTable items={query.data.items} showDocument={false} />}
+    </section>
+  )
+}
+
 export function DocumentPage() {
   const { documentId = '' } = useParams()
+  const [search] = useSearchParams()
+  const focusKey = search.get('fragment')
+  const focusPageRaw = Number(search.get('page'))
+  const focusPage = Number.isInteger(focusPageRaw) && focusPageRaw > 0 ? focusPageRaw : null
   const queryClient = useQueryClient()
   const navigate = useNavigate()
   const key = [...DOCUMENTS_KEY, documentId]
@@ -190,8 +223,16 @@ export function DocumentPage() {
           versionId={version.id}
           pageCount={version.page_count}
           pageSource={version.page_source}
+          focusKey={focusKey}
+          focusPage={focusPage}
         />
       )}
+
+      <DocumentAnalyses
+        documentId={doc.id}
+        canAnalyze={doc.can_analyze}
+        ready={version?.extraction_status === 'ready'}
+      />
 
       {doc.can_share && <AccessPanel documentId={doc.id} />}
     </section>

@@ -9,17 +9,17 @@
 - Кроме промптов есть **дополнительный этап 08A** (автоматические зашифрованные бэкапы с выгрузкой вне сервера, расписание, ротация) — описан в `docs/IMPLEMENTATION_PLAN.md`. Выполняется после 08 и до 09 (или раньше по явной команде пользователя); перед началом уточнить у пользователя значения из таблицы «по умолчанию».
 
 ## Текущее состояние (2026-10-17)
-- Ветка `main` (удалённых репозиториев нет). Закоммичены этапы 00–05 (последний — `Stage 05: LLM providers, model catalog, SSRF guard`). Этап 06 (анализ и доказательства) выполнен, **не закоммичен** — ждёт просьбы пользователя (`Stage 06: ...`).
-- Следующий этап — промпт `07-...` (UI и отчёты): форма анализа (`POST /api/analyses`, `/estimate`, облачное согласие), прогресс (polling `GET /api/analyses/{id}`), отчёт (`/risks`, три состояния доказательств, отдельный вид `missing_clause`, `include_rejected`), экспорт. Контракт API — `app/schemas/analyses.py`, описание — ARCHITECTURE §9.4, OPERATIONS §12.
-- Уроки live-проверки этапа 06: deepseek-r1 8B на CPU не укладывается в 900 с на вызов анализа чанка — локальные live-прогоны полного анализа на этой машине непрактичны (проверять на OpenRouter `gpt-4o-mini`: полный анализ ≈ 30 с, ≈ 0,002 USD); при нагрузке CPU Ollama тормозит и тесты (vitest-воркеры не стартуют) — не запускать проверки параллельно с Ollama.
+- Ветка `main` (удалённых репозиториев нет). Закоммичены этапы 00–07 (последний — `Stage 07: UI, reports and exports`). Рабочее дерево чистое.
+- Следующий этап — промпт `08-...` (hardening). Ждать, пока пользователь пришлёт его. Затем — доп. этап 08A (бэкапы; сначала уточнить значения по умолчанию) и 09. Из этапов 06–07 в 08 перенесено: автоматический аудит доступности (axe/Lighthouse), визуальная проверка UI в браузере, `pip-audit`/`npm audit`, проверка лицензий, Playwright e2e.
+- Live-анализ практичен только на OpenRouter `gpt-4o-mini` (≈ 30 с, ≈ 0,002 USD); deepseek-r1 8B на CPU не укладывается в 900 с на вызов. При нагрузке CPU Ollama тормозит и тесты — не запускать проверки параллельно с Ollama.
 - Решение владельца: PyMuPDF (AGPL-3.0) остаётся, приложение только для внутреннего использования — `docs/LICENSES.md`.
-- В локальной БД Docker-стека — 4 синтетических документа smoke-теста этапа 04 и синтетический договор live-проверки этапа 06 с 3 анализами (владелец `root@example.org`); облачные модели выключены.
+- В локальной БД Docker-стека — 4 синтетических документа smoke-теста этапа 04 и синтетический договор live-проверки этапа 06 с 3 анализами (2 завершены на `gpt-4o-mini`, 1 отменён) и 4 экспортами smoke-теста этапа 07 (владелец `root@example.org`); облачные модели выключены.
 - Локальный Docker-стек может быть запущен (`docker compose ps`). Локальный Superadmin — `root@example.org`; его текущий пароль не из `.env` (сменён при smoke-тесте) и в репозиторий не пишется — он в локальной памяти Claude или у пользователя. Открывать `http://localhost:8080` или `http://127.0.0.1:8080` (оба в `ALLOWED_ORIGINS`).
 - Live-проверено: Ollama на хосте (`http://host.docker.internal:11434`, deepseek-r1, CPU — медленно) и OpenRouter (ключ владельца введён через UI, `openai/gpt-4o-mini`). В локальной БД провайдер «Host Ollama» включён (таймаут 300 с), «OpenRouter» выключен, их модели (`deepseek-r1:latest`, `openai/gpt-4o-mini`) — выключены, `json_schema` подтверждена; облачные модели выключены. Платные запросы к OpenRouter без нужды не делать.
 
 ## С чего начать новую сессию
 1. `docs/IMPLEMENTATION_STATUS.md` — что сделано и проверено, ограничения последнего этапа.
-2. `docs/ARCHITECTURE.md` — целевая архитектура (модель данных §5, RBAC §6, загрузка §8, анализ §9–11, провайдеры §12, очередь §13).
+2. `docs/ARCHITECTURE.md` — целевая архитектура (модель данных §5, RBAC §6, загрузка §8, анализ §9–11 и §9.4, провайдеры §12, очередь §13, UI §16.1, экспорт §17.1).
 3. `docs/THREAT_MODEL.md` — меры безопасности с привязкой к этапам.
 4. `docs/IMPLEMENTATION_PLAN.md` — состав этапов 02–09.
 5. `docs/OPERATIONS.md` — запуск, тесты, миграции, бэкапы.
@@ -39,6 +39,8 @@
 - `backend/app/ingestion/` — приём и извлечение: `formats.py` (сигнатуры, ZIP/OLE-проверки), `pdf.py`, `docx.py` (+`docx_numbering.py`), `assemble.py` (канонический текст, фрагменты, страницы), `pagemap.py` (страницы по рендеру LibreOffice), `sandbox.py` (дочерний процесс с лимитами), `pipeline.py` (задача `extract_document`), `converter_client.py`. API — `app/api/documents.py`, сервис — `app/services/documents.py`, задачи — `app/jobs/handlers/documents.py`. Тестовые документы — `tests/docfactory.py`, `tests/fixtures/contract.doc`.
 - `backend/app/llm/` — слой провайдеров: `base.py` (`LLMProvider`, `StructuredRequest/Result`), `errors.py`, `netguard.py` (SSRF-guard: `GuardedTransport` с pinned IP, `parse_base_url`, `NetworkPolicy`), `http.py` (`ProviderHttp`: таймауты, лимит ответа, `with_retries`), `openrouter.py`, `ollama.py`, `mock.py`, `factory.py` (`ProviderFactory`, `network_policy(cfg)`). Каталог — `app/services/catalog.py` + `app/api/catalog.py` (`/api/admin/providers|models|llm-settings|config-revisions`, `/api/models/available`, `/api/models/{id}/cloud-consent`); секреты — `app/security/secretbox.py` (`SecretBox`, MultiFernet). Тесты провайдеров — `tests/llm_helpers.py` (`FakeResolver`, `Recorder`, `factory()`); в API-тестах сеть подменяется `api.app.state.llm_factory = ProviderFactory(..., transport=MockTransport, resolver=FakeResolver)`.
 - `backend/app/analysis/` — конвейер анализа (этап 06): `runner.py` (исполнитель этапов задачи `run_analysis`: structure → chunks → cross_section → materialize → quote_retry → verify → finalize; fencing по `progress.run_id`, промежуточные результаты в `analyses.stage_results`), `chunking.py`, `structure.py`, `prompts.py` (`PROMPT_VERSIONS` — повышать версию при изменении промпта), `schemas.py` (ответы модели, `provider_schema()` для strict JSON Schema), `quotes.py` (нормализация), `evidence.py` (шаг A, `final_status`), `dedup.py`, `injection.py`, `report.py`, `errors.py`. Сервис — `app/services/analyses.py` (запуск, отмена, повтор, `reconcile_orphans` вызывается worker'ом), API — `app/api/analyses.py`, задача — `app/jobs/handlers/analyses.py`; worker создаёт `ProviderFactory` и передаёт в `JobContext.llm_factory`. Тесты анализа — `tests/analysis_helpers.py` (`make_document`, `make_model`, `FakeLLM` по имени схемы, `run_jobs` — настоящий worker, `start/get_analysis/risk_list`).
+- `backend/app/exports/` — экспорт (этап 07): `content.py` (данные отчёта, только перечисленные поля snapshot), `render.py` (PDF reportlab + шрифт `fonts/DejaVuSans*.ttf`, DOCX, CSV, XLSX), `safety.py` (`pdf_markup`, `cell` — formula injection, `clean_text`). Сервис — `app/services/exports.py` (задача `build_export`, `expire_exports` в housekeeping worker'а), API — `app/api/resources.py`; системные параметры — `app/api/settings.py` (импортируется в `main.py` как `settings_api`: имя `settings` занято переменной).
+- `frontend/src/pages/analyses/` — новый анализ, список, отчёт (`AnalysisPage`), `RiskCard`, `RisksSection` (фильтры на клиенте), `ExportPanel`; API — `src/api/analyses.ts`; ленивые страницы — `src/app/lazyPages.tsx`; тестовые фикстуры — `src/test/fixtures.ts` (`makeAnalysis`, `makeRisk`, `RISKS`, `analysisHandlers`), `src/test/handlers.ts` (`emptyOverviewHandlers` — `/` теперь «Обзор», статус системы — `/status`).
 - `converter/` — изолированный LibreOffice: `POST /convert?from=doc&to=docx|from=docx&to=pdf`.
 - `compose.yaml` (корень), `compose.dev.yaml` (БД на 127.0.0.1:55432), `deploy/backup.sh|restore.sh`.
 
@@ -48,7 +50,7 @@
 cd backend
 .venv/Scripts/ruff check app tests && .venv/Scripts/ruff format --check app tests
 .venv/Scripts/mypy app tests
-TEST_DATABASE_URL=postgresql+psycopg://cai:devpass@127.0.0.1:55432/cai .venv/Scripts/python -m pytest -q   # ~2 мин, 492 теста
+TEST_DATABASE_URL=postgresql+psycopg://cai:devpass@127.0.0.1:55432/cai .venv/Scripts/python -m pytest -q   # ~2 мин, 520 тестов
 # frontend
 cd frontend && npm run typecheck && npx oxlint --deny-warnings src && npx vitest run && npm run build
 # docker
@@ -85,4 +87,6 @@ Integration-тесты API: фикстура `api` (`tests/integration/conftest.
 - HTTP к внешним провайдерам — только через `ProviderHttp`/`GuardedTransport` (SSRF), вне транзакции БД (сначала `commit()` чтения).
 - Вывод structlog не перехватывается `capsys` (поток задан при настройке) — проверки логов через `caplog` (видит события до редактирования).
 - Ключи логов со словами token/secret/password маскируются как секреты — для счётчиков токенов используй другой ключ (`usage`).
+- MSW: в одном `server.use(...)` приоритет у обработчиков, перечисленных раньше, — тестовые обработчики ставь перед общими (`analysisHandlers`).
+- Write-инструмент превращает `\uXXXX` в строковых литералах в сами символы — escape-последовательности вставляй скриптом с `\\u…`.
 - В API-тестах `async with client` не закрывает клиента (закрывает фикстура `api`) — клиента можно переиспользовать в нескольких блоках.

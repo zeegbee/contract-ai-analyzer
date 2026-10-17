@@ -57,7 +57,8 @@ async def _audit_superadmin_access(db: AsyncSession, auth: AuthContext, document
 
 async def _detail(db: AsyncSession, auth: AuthContext, analysis: Analysis) -> AnalysisDetailOut:
     can_analyze = await svc.can_analyze_document(db, auth.user, analysis.document_id)
-    return svc.detail_view(analysis, can_analyze=can_analyze)
+    title = (await db.execute(select(Document.title).where(Document.id == analysis.document_id))).scalar_one()
+    return svc.detail_view(analysis, can_analyze=can_analyze, document_title=title)
 
 
 def _require_contributor(auth: AuthContext) -> None:
@@ -106,7 +107,7 @@ async def list_analyses(
     cursor: Annotated[str | None, Query(max_length=200)] = None,
 ) -> AnalysisListOut:
     """Анализы доступных документов (свои и явно доступные; Superadmin — только по ID документа)."""
-    stmt = select(Analysis).join(Document, Document.id == Analysis.document_id)
+    stmt = select(Analysis, Document.title).join(Document, Document.id == Analysis.document_id)
     if document_id is not None:
         document = await get_document_for(db, auth.user, document_id, DocumentAction.view)
         await _audit_superadmin_access(db, auth, document, "analysis_list")
@@ -120,19 +121,21 @@ async def list_analyses(
         created, analysis_id = decode_cursor(cursor)
         stmt = stmt.where(svc.cursor_clause(created, analysis_id))
     stmt = stmt.order_by(Analysis.created_at.desc(), Analysis.id.desc()).limit(limit + 1)
-    rows = list((await db.execute(stmt)).scalars())
+    rows = [(row[0], row[1]) for row in (await db.execute(stmt)).all()]
     next_cursor = None
     if len(rows) > limit:
         rows = rows[:limit]
-        next_cursor = encode_cursor(rows[-1].created_at, rows[-1].id)
+        next_cursor = encode_cursor(rows[-1][0].created_at, rows[-1][0].id)
     items = []
     analyzable: dict[uuid.UUID, bool] = {}
-    for analysis in rows:
+    for analysis, title in rows:
         if analysis.document_id not in analyzable:
             analyzable[analysis.document_id] = await svc.can_analyze_document(
                 db, auth.user, analysis.document_id
             )
-        items.append(svc.summary_view(analysis, can_analyze=analyzable[analysis.document_id]))
+        items.append(
+            svc.summary_view(analysis, can_analyze=analyzable[analysis.document_id], document_title=title)
+        )
     return AnalysisListOut(items=items, next_cursor=next_cursor)
 
 

@@ -6,6 +6,7 @@ export const CATALOG_KEY = ['catalog'] as const
 export const PROVIDERS_KEY = [...CATALOG_KEY, 'providers'] as const
 export const MODELS_KEY = [...CATALOG_KEY, 'models'] as const
 export const AVAILABLE_MODELS_KEY = ['models', 'available'] as const
+export const LLM_SETTINGS_KEY = [...CATALOG_KEY, 'settings'] as const
 
 const providerTypeSchema = z.enum(['openrouter', 'ollama'])
 export type ProviderType = z.infer<typeof providerTypeSchema>

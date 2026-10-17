@@ -382,15 +382,25 @@ def factory_for(api: ApiEnv, fake: FakeLLM) -> ProviderFactory:
     return ProviderFactory(SecretBox(api.settings.secrets_encryption_keys), override=lambda _cfg: fake)
 
 
-async def run_jobs(api: ApiEnv, fake: FakeLLM, *, limit: int = 1, release_delayed: bool = True) -> int:
-    """Выполняет до `limit` задач `run_analysis` настоящим worker'ом. Возвращает число выполненных."""
+async def run_jobs(
+    api: ApiEnv,
+    fake: FakeLLM,
+    *,
+    limit: int = 1,
+    release_delayed: bool = True,
+    job_types: tuple[str, ...] = ("run_analysis",),
+) -> int:
+    """Выполняет до `limit` задач (по умолчанию `run_analysis`) настоящим worker'ом.
+
+    Возвращает число выполненных задач.
+    """
     worker = Worker(api.settings, api.factory, factory_for(api, fake))
     done = 0
     for _ in range(limit):
         if release_delayed:
             await api.execute("UPDATE jobs SET run_after = now() WHERE status = 'queued'")
         async with api.factory() as session:
-            job = await queue.claim(session, worker.worker_id, 120, ["run_analysis"])
+            job = await queue.claim(session, worker.worker_id, 120, list(job_types))
         if job is None:
             break
         await worker.execute(job)

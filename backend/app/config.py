@@ -96,6 +96,12 @@ class Settings(BaseSettings):
     # Как часто во время вызова модели проверяется запрос отмены.
     analysis_cancel_poll_seconds: float = Field(default=2.0, gt=0, le=60)
 
+    # --- Экспорт отчётов ---
+    # Сколько часов хранится сформированный файл экспорта (затем удаляется worker'ом).
+    export_ttl_hours: int = Field(default=168, ge=1, le=24 * 365)
+    # Не больше N экспортов одного пользователя в очереди (защита от DoS).
+    max_pending_exports_per_user: int = Field(default=10, ge=1, le=1000)
+
     # --- Сессии и вход ---
     session_idle_minutes: int = Field(default=480, ge=5, le=7 * 24 * 60)
     session_absolute_hours: int = Field(default=168, ge=1, le=90 * 24)

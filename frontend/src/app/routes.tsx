@@ -1,19 +1,26 @@
 import type { RouteObject } from 'react-router'
 
-import { AccountPage } from '../pages/AccountPage'
-import { AuditPage } from '../pages/admin/AuditPage'
-import { LlmPage } from '../pages/admin/LlmPage'
-import { ModelPage } from '../pages/admin/ModelPage'
-import { UserDetailPage } from '../pages/admin/UserDetailPage'
-import { UsersPage } from '../pages/admin/UsersPage'
 import { ChangePasswordPage } from '../pages/ChangePasswordPage'
 import { DocumentPage } from '../pages/documents/DocumentPage'
 import { DocumentsPage } from '../pages/documents/DocumentsPage'
 import { LoginPage } from '../pages/LoginPage'
 import { NotFoundPage } from '../pages/NotFoundPage'
-import { StatusPage } from '../pages/StatusPage'
+import { OverviewPage } from '../pages/OverviewPage'
 import { RequireAuth, RequireCapability } from './guards'
 import { Layout } from './Layout'
+import {
+  AccountPage,
+  AnalysesPage,
+  AnalysisPage,
+  AuditPage,
+  LlmPage,
+  ModelPage,
+  NewAnalysisPage,
+  SettingsPage,
+  StatusPage,
+  UserDetailPage,
+  UsersPage,
+} from './lazyPages'
 
 export const routes: RouteObject[] = [
   { path: '/login', element: <LoginPage /> },
@@ -25,11 +32,22 @@ export const routes: RouteObject[] = [
       </RequireAuth>
     ),
     children: [
-      { index: true, element: <StatusPage /> },
+      { index: true, element: <OverviewPage /> },
+      { path: 'status', element: <StatusPage /> },
       { path: 'change-password', element: <ChangePasswordPage /> },
       { path: 'account', element: <AccountPage /> },
       { path: 'documents', element: <DocumentsPage /> },
       { path: 'documents/:documentId', element: <DocumentPage /> },
+      { path: 'analyses', element: <AnalysesPage /> },
+      {
+        path: 'analyses/new',
+        element: (
+          <RequireCapability capability="upload_documents">
+            <NewAnalysisPage />
+          </RequireCapability>
+        ),
+      },
+      { path: 'analyses/:analysisId', element: <AnalysisPage /> },
       {
         path: 'admin/users',
         element: (
@@ -59,6 +77,14 @@ export const routes: RouteObject[] = [
         element: (
           <RequireCapability capability="manage_models">
             <ModelPage />
+          </RequireCapability>
+        ),
+      },
+      {
+        path: 'admin/settings',
+        element: (
+          <RequireCapability capability="manage_models">
+            <SettingsPage />
           </RequireCapability>
         ),
       },

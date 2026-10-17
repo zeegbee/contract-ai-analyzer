@@ -19,6 +19,10 @@ dependencies = [
     "pymupdf>=1.26",
     "lxml>=5.3",
     "olefile>=0.47",
+    # Экспорт отчётов: PDF (reportlab, без HTML-рендера), DOCX, XLSX.
+    "reportlab>=4.2",
+    "python-docx>=1.2",
+    "openpyxl>=3.1",
 ]
 
 [project.optional-dependencies]
@@ -26,9 +30,8 @@ dev = [
     "pytest>=8.4",
     "pytest-asyncio>=1.1",
     "ruff>=0.12",
-    # Генерация DOCX-фикстур в тестах (в приложении DOCX читается напрямую через zipfile + lxml).
-    "python-docx>=1.2",
     "lxml-stubs>=0.5",
+    "types-openpyxl>=3.1",
     "mypy>=1.17",
 ]
 
@@ -40,7 +43,7 @@ build-backend = "setuptools.build_meta"
 include = ["app*"]
 
 [tool.setuptools.package-data]
-app = ["db/migrations/script.py.mako", "py.typed"]
+app = ["db/migrations/script.py.mako", "py.typed", "exports/fonts/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -75,7 +78,7 @@ plugins = ["pydantic.mypy"]
 exclude = ["app/db/migrations/versions/"]
 
 [[tool.mypy.overrides]]
-module = ["olefile"]
+module = ["olefile", "reportlab", "reportlab.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]

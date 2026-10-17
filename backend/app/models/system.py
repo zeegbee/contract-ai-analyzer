@@ -68,6 +68,8 @@ class Export(UUIDPk, Timestamps, Base):
     )
     storage_key: Mapped[str | None] = mapped_column(String(200), nullable=True)
     expires_at: Mapped[datetime | None] = tz_datetime(nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    size_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
 
 class AuditLog(Base):

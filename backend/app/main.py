@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from fastapi import APIRouter, FastAPI
 
 from app.api import analyses, audit, auth, catalog, documents, health, resources, users
+from app.api import settings as settings_api
 from app.config import Settings, get_settings
 from app.db.session import create_engine, create_session_factory
 from app.errors import install_error_handlers
@@ -89,5 +90,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     api.include_router(analyses.router)
     api.include_router(resources.router)
     api.include_router(catalog.router)
+    api.include_router(settings_api.router)
     app.include_router(api)
     return app

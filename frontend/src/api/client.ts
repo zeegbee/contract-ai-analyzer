@@ -74,11 +74,13 @@ export interface RequestOptions {
   signal?: AbortSignal
   /** Разрешить статусы, отличные от 2xx, и вернуть тело как есть (для readiness 503). */
   acceptStatuses?: number[]
+  /** Дополнительные заголовки (например, Idempotency-Key). */
+  headers?: Record<string, string>
 }
 
 export async function apiRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const method = (options.method ?? 'GET').toUpperCase()
-  const headers: Record<string, string> = { Accept: 'application/json' }
+  const headers: Record<string, string> = { ...options.headers, Accept: 'application/json' }
   let body: BodyInit | undefined
   if (options.body instanceof FormData) {
     body = options.body

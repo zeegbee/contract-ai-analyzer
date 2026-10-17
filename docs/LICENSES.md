@@ -38,7 +38,11 @@
 | cryptography | 50.0.2 | Apache-2.0 или BSD-3-Clause | |
 | structlog | 26.1.0 | MIT или Apache-2.0 | |
 | FastAPI, SQLAlchemy, Alembic, Pydantic, argon2-cffi | — | MIT | |
-| python-docx (только тесты) | 1.2.0 | MIT | |
+| python-docx | 1.2.0 | MIT | экспорт DOCX (с этапа 07), генерация тестовых фикстур |
+| reportlab | 5.0.1 | BSD | экспорт PDF |
+| openpyxl / et-xmlfile | 3.1.5 / 2.0.0 | MIT | экспорт XLSX |
+| Pillow (зависимость reportlab и python-docx) | 13.0.0 | MIT-CMU (HPND) | |
+| Шрифты DejaVu Sans (`backend/app/exports/fonts/`, взяты из пакета matplotlib 3.11.2) | 2.35 | Bitstream Vera License + public domain (`LICENSE_DEJAVU`) | встраиваются в PDF-отчёт; лицензия разрешает распространение и встраивание |
 | React, React Router, TanStack Query, Zod, React Hook Form | — | MIT | |
 | PostgreSQL (образ `postgres:17-alpine`) | 17 | PostgreSQL License | |
 | nginx (образ `nginx-unprivileged`) | — | BSD-2-Clause | |

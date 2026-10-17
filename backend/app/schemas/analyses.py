@@ -87,6 +87,7 @@ class ProgressOut(BaseModel):
 class AnalysisSummaryOut(BaseModel):
     id: uuid.UUID
     document_id: uuid.UUID
+    document_title: str
     version_id: uuid.UUID
     created_by_id: uuid.UUID | None
     status: AnalysisStatus

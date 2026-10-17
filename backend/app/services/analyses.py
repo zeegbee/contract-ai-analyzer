@@ -620,11 +620,12 @@ def _can_retry(analysis: Analysis, can_analyze: bool) -> bool:
     return can_analyze and analysis.status in RETRYABLE
 
 
-def summary_view(analysis: Analysis, *, can_analyze: bool) -> AnalysisSummaryOut:
+def summary_view(analysis: Analysis, *, can_analyze: bool, document_title: str) -> AnalysisSummaryOut:
     progress = analysis.progress or {}
     return AnalysisSummaryOut(
         id=analysis.id,
         document_id=analysis.document_id,
+        document_title=document_title,
         version_id=analysis.version_id,
         created_by_id=analysis.created_by_id,
         status=analysis.status,
@@ -651,11 +652,11 @@ def summary_view(analysis: Analysis, *, can_analyze: bool) -> AnalysisSummaryOut
     )
 
 
-def detail_view(analysis: Analysis, *, can_analyze: bool) -> AnalysisDetailOut:
+def detail_view(analysis: Analysis, *, can_analyze: bool, document_title: str) -> AnalysisDetailOut:
     snapshot = dict(analysis.config_snapshot)
     estimate = snapshot.get("estimate")
     return AnalysisDetailOut(
-        **summary_view(analysis, can_analyze=can_analyze).model_dump(),
+        **summary_view(analysis, can_analyze=can_analyze, document_title=document_title).model_dump(),
         config_snapshot=snapshot,
         cloud_consent_at=analysis.cloud_consent_at,
         summary=analysis.summary,

@@ -1,4 +1,5 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { Suspense } from 'react'
 import { NavLink, Outlet, useNavigate } from 'react-router'
 
 import { logout } from '../api/auth'
@@ -30,11 +31,14 @@ export function Layout() {
           <span className="text-base font-semibold">{ru.appName}</span>
           {!me.must_change_password && (
             <nav aria-label={ru.nav.mainNavigation} className="flex flex-wrap gap-4 text-sm">
+              <NavLink to="/" end className={linkClass}>
+                {ru.nav.overview}
+              </NavLink>
               <NavLink to="/documents" className={linkClass}>
                 {ru.nav.documents}
               </NavLink>
-              <NavLink to="/" end className={linkClass}>
-                {ru.nav.status}
+              <NavLink to="/analyses" className={linkClass}>
+                {ru.nav.analyses}
               </NavLink>
               {me.capabilities.manage_users && (
                 <NavLink to="/admin/users" className={linkClass}>
@@ -44,6 +48,11 @@ export function Layout() {
               {me.capabilities.manage_models && (
                 <NavLink to="/admin/models" className={linkClass}>
                   {ru.nav.models}
+                </NavLink>
+              )}
+              {me.capabilities.manage_models && (
+                <NavLink to="/admin/settings" className={linkClass}>
+                  {ru.nav.settings}
                 </NavLink>
               )}
               {me.capabilities.view_audit_log && (
@@ -72,10 +81,17 @@ export function Layout() {
         </div>
       </header>
       <main id="main" className="mx-auto w-full max-w-6xl flex-1 px-4 py-6">
-        <Outlet />
+        <Suspense fallback={<p aria-live="polite">{ru.common.loading}</p>}>
+          <Outlet />
+        </Suspense>
       </main>
       <footer className="border-t border-slate-200 bg-white">
-        <p className="mx-auto max-w-6xl px-4 py-3 text-xs text-slate-600">{ru.disclaimer}</p>
+        <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-2 px-4 py-3 text-xs text-slate-600">
+          <p>{ru.disclaimer}</p>
+          <NavLink to="/status" className="text-slate-700 underline hover:text-slate-950">
+            {ru.nav.status}
+          </NavLink>
+        </div>
       </footer>
     </div>
   )

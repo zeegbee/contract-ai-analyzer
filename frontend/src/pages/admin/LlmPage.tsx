@@ -4,6 +4,7 @@ import { Link } from 'react-router'
 
 import {
   CATALOG_KEY,
+  LLM_SETTINGS_KEY,
   checkProvider,
   createModel,
   createProvider,
@@ -31,7 +32,7 @@ import { formatDateTime } from '../../lib/format'
 import { pricingText } from '../../lib/pricing'
 
 const t = ru.llm
-const SETTINGS_KEY = [...CATALOG_KEY, 'settings']
+const SETTINGS_KEY = LLM_SETTINGS_KEY
 
 function Badge({ children, tone = 'slate' }: { children: string; tone?: 'slate' | 'amber' | 'green' | 'red' }) {
   const tones = {
