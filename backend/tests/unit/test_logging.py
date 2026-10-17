@@ -72,3 +72,37 @@ def test_end_to_end_log_output_contains_no_secrets(capsys: pytest.CaptureFixture
     assert CONTRACT_TEXT not in out
     assert lines[0]["text"] == f"[CONTENT len={len(CONTRACT_TEXT)}]"
     assert len(lines[0]["detail"]) < 400
+
+
+VICTIM_EMAIL = "victim@" + "example.org"
+
+
+def _raise_with_contract_text() -> None:
+    # Строки сообщений собираются из переменных: в трассировке видна строка кода, но не значения.
+    inner, outer = f"input_value='{CONTRACT_TEXT}'", f"DETAIL: Key (email)=({VICTIM_EMAIL}) already exists"
+    try:
+        raise ValueError(inner)
+    except ValueError as exc:
+        raise RuntimeError(outer) from exc
+
+
+def test_exception_messages_are_not_logged(capsys: pytest.CaptureFixture[str]) -> None:
+    configure_logging("INFO", "json")
+    try:
+        _raise_with_contract_text()
+    except RuntimeError as exc:
+        get_logger("test").error("job_crashed", exc_type=type(exc).__name__, exc_info=exc)
+        # Сторонние библиотеки логируют через stdlib с exc_info=True.
+        logging.getLogger("uvicorn.error").exception("Exception in ASGI application")
+    out = capsys.readouterr().out
+    lines = [json.loads(line) for line in out.strip().splitlines()]
+    assert len(lines) == 2
+    assert "неустойку" not in out
+    assert VICTIM_EMAIL not in out
+    for line in lines:
+        trace = line["exception"]
+        # Типы и кадры стека для диагностики остаются, сообщения — нет.
+        assert "builtins.ValueError: [message hidden]" in trace
+        assert "builtins.RuntimeError: [message hidden]" in trace
+        assert "_raise_with_contract_text" in trace
+        assert trace.index("ValueError") < trace.index("RuntimeError")

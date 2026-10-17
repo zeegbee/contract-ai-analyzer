@@ -39,3 +39,9 @@ backups/
 
 # Метаданные установки пакета (pip install -e)
 *.egg-info/
+
+# e2e-стенд: секреты, состояние прогона, бэкапы, отчёты Playwright
+e2e/.env.e2e
+e2e/state/
+frontend/test-results/
+frontend/playwright-report/

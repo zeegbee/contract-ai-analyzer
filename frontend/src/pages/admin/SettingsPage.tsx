@@ -6,6 +6,7 @@ import { fetchSystemSettings } from '../../api/settings'
 import { ErrorNotice } from '../../components/ErrorNotice'
 import { PageTitle } from '../../components/ui'
 import { ru } from '../../i18n/ru'
+import { RetentionSection } from './RetentionSection'
 
 const t = ru.settings
 const number = new Intl.NumberFormat('ru-RU')
@@ -36,6 +37,8 @@ export function SettingsPage() {
           {t.llmLink}
         </Link>
       </section>
+
+      <RetentionSection />
 
       <p className="text-sm text-slate-700">{t.readOnly}</p>
       {system.isPending && <p>{ru.common.loading}</p>}

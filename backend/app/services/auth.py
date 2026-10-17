@@ -36,6 +36,12 @@ class LoginRateLimited(AppError):
     message = "Слишком много неудачных попыток входа. Повторите позже."
 
 
+class PasswordChangeRateLimited(AppError):
+    status_code = 429
+    code = "password_change_rate_limited"
+    message = "Слишком много неудачных попыток. Повторите позже."
+
+
 class PasswordPolicyViolation(AppError):
     status_code = 422
     code = "password_policy"
@@ -163,7 +169,27 @@ class AuthService:
         ip: str | None,
         user_agent: str | None,
     ) -> IssuedSession:
+        # Неверный текущий пароль считается неудачной попыткой входа по этому e-mail: с перехваченной
+        # сессией нельзя перебирать пароль через смену пароля (и обходить лимит входа).
+        email_hash = self.limiter.email_hash(normalize_login_email(user.email))
+        state = await self.limiter.check(db, email_hash, ip)
+        if state.retry_after_s is not None:
+            raise PasswordChangeRateLimited(headers={"Retry-After": str(state.retry_after_s)})
         if not self.passwords.verify(user.password_hash, current_password):
+            await self.limiter.register(db, email_hash, ip, success=False)
+            record(
+                db,
+                AuditAction.password_change_failed,
+                actor_id=user.id,
+                target_type="user",
+                target_id=user.id,
+                ip=ip,
+                details={"reason": "invalid_current_password"},
+            )
+            await db.commit()
+            delay = self.limiter.failure_delay_s(state.email_failures + 1)
+            if delay > 0:
+                await asyncio.sleep(delay)
             raise AppError("Текущий пароль указан неверно", code="invalid_current_password", status_code=400)
         if current_password == new_password:
             raise PasswordPolicyViolation(
@@ -173,6 +199,7 @@ class AuthService:
         user.password_hash = self.passwords.hash(new_password)
         user.password_changed_at = utcnow()
         user.must_change_password = False
+        await self.limiter.register(db, email_hash, ip, success=True)
         revoked = await self.sessions.revoke_all(db, user.id, RevokeReason.password_changed)
         issued = await self.sessions.create(db, user, ip=ip, user_agent=user_agent)
         record(

@@ -243,7 +243,8 @@ export const exportSchema = z.object({
   size_bytes: z.number().nullable(),
   expires_at: z.string().nullable(),
   error_code: z.string().nullable(),
-  download_url: z.string().nullable(),
+  // Ссылка используется в href: только относительный путь API (не javascript:, не внешний адрес).
+  download_url: z.string().regex(/^\/api\/exports\/[0-9a-f-]+\/download$/).nullable(),
 })
 export type ExportItem = z.infer<typeof exportSchema>
 const exportListSchema = z.object({ items: z.array(exportSchema) })

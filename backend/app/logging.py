@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 import re
 import sys
+import traceback
 from collections.abc import Mapping, MutableMapping
 from typing import Any
 
@@ -97,6 +98,48 @@ def redact_processor(_logger: Any, _method: str, event_dict: EventDict) -> Event
     return event_dict
 
 
+def format_exception_safely(exc: BaseException) -> str:
+    """Трассировка без текста сообщений исключений.
+
+    Сообщение исключения может содержать данные: `input_value` ошибки валидации ответа модели
+    (фрагменты договора), `DETAIL` PostgreSQL со значениями полей, фрагмент ответа провайдера.
+    Для диагностики достаточно типов исключений и кадров стека (файл, строка, функция, код).
+    """
+    blocks: list[str] = []
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        frames = "".join(traceback.StackSummary.extract(traceback.walk_tb(current.__traceback__)).format())
+        name = f"{type(current).__module__}.{type(current).__qualname__}"
+        blocks.append(f"Traceback (most recent call last):\n{frames}{name}: [message hidden]")
+        if current.__cause__ is not None:
+            current = current.__cause__
+        elif current.__context__ is not None and not current.__suppress_context__:
+            current = current.__context__
+        else:
+            current = None
+    # Как в стандартной трассировке: исходное исключение — первым.
+    return "\n\nDuring handling, another exception occurred:\n\n".join(reversed(blocks))
+
+
+def safe_exc_info_processor(_logger: Any, _method: str, event_dict: EventDict) -> EventDict:
+    """Замена `structlog.processors.format_exc_info`, которая не выводит сообщения исключений."""
+    exc_info = event_dict.pop("exc_info", None)
+    if not exc_info:
+        return event_dict
+    exc: BaseException | None
+    if isinstance(exc_info, BaseException):
+        exc = exc_info
+    elif isinstance(exc_info, tuple):
+        exc = exc_info[1]
+    else:
+        exc = sys.exc_info()[1]
+    if exc is not None:
+        event_dict["exception"] = format_exception_safely(exc)
+    return event_dict
+
+
 def _drop_color_message(_logger: Any, _method: str, event_dict: EventDict) -> EventDict:
     event_dict.pop("color_message", None)
     return event_dict
@@ -125,7 +168,7 @@ def configure_logging(level: str = "INFO", fmt: str = "json") -> None:
         foreign_pre_chain=shared,
         processors=[
             structlog.stdlib.ProcessorFormatter.remove_processors_meta,
-            structlog.processors.format_exc_info,
+            safe_exc_info_processor,
             redact_processor,
             renderer,
         ],

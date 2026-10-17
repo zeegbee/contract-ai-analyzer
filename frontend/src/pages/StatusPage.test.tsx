@@ -21,6 +21,17 @@ describe('StatusPage', () => {
     expect(screen.getAllByText('в порядке')).toHaveLength(3)
   })
 
+  it('предупреждает, что worker не отвечает, хотя API готов', async () => {
+    server.use(
+      http.get('*/api/health/ready', () =>
+        HttpResponse.json({ status: 'ready', checks: { database: 'ok', worker: 'unavailable' }, version: '0.1.0' }),
+      ),
+    )
+    renderRoute('/status')
+    expect(await screen.findByText('Фоновые задачи (worker)')).toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent('загрузка, анализ и экспорт не будут выполняться')
+  })
+
   it('сообщает, что нужен первый администратор', async () => {
     server.use(
       http.get('*/api/health/ready', () =>

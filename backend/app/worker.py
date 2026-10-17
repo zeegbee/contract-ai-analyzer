@@ -27,6 +27,7 @@ from app.models.system import WorkerHeartbeat
 from app.security.secretbox import SecretBox
 from app.services.analyses import reconcile_orphans
 from app.services.exports import expire_exports
+from app.services.retention import apply_retention
 from app.storage import LocalStorage
 
 log = get_logger("app.worker")
@@ -84,6 +85,8 @@ class Worker:
                     expired = await expire_exports(self.session_factory, self.storage)
                     if expired:
                         log.info("exports_expired", count=expired)
+                    # Политика хранения документов (по умолчанию выключена — ничего не делает).
+                    await apply_retention(self.session_factory)
                     last_reap = time.monotonic()
             except Exception as exc:
                 log.warning("housekeeping_failed", exc_type=type(exc).__name__)

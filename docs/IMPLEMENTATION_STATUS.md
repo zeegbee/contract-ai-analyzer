@@ -376,3 +376,84 @@ Backend: `app/exports/*` (новый: `content.py`, `render.py`, `safety.py`, `f
 - Системные параметры в «Настройках» только отображаются; меняются через окружение и перезапуск.
 - Экспорт содержит цитаты договора; срок хранения файла ограничен (`EXPORT_TTL_HOURS`), бэкапы хранилища содержат файлы до своей ротации.
 - Приложение по-прежнему не скрывает риски вручную (`is_hidden_by_user` не используется в UI).
+
+## Этап 08 — Безопасность, тесты и готовность к эксплуатации (2026-10-17)
+
+### Аудит и исправления
+Аудит по THREAT_MODEL: маршруты API и RBAC/IDOR (документы, текст/фрагменты, файлы, анализы, риски, экспорты, админка), CSRF/CORS/заголовки/cookies, XSS, SQL, rate limits, загрузки и лимиты ресурсов, SSRF, секреты и текст договоров в логах, prompt injection и JSON, облачное согласие, удаление и бэкапы, health checks. Найдено и исправлено:
+
+| Проблема | Исправление | Тест |
+|---|---|---|
+| Смена пароля не ограничивала неверный «текущий пароль» — с перехваченной сессией можно было перебирать пароль, обходя лимит входа | неудача считается неудачей входа по e-mail (тот же лимит и задержка, 429 `password_change_rate_limited`), аудит `auth.password_change_failed`, успешная смена сбрасывает счётчик | `test_change_password_wrong_current_is_rate_limited`, `test_successful_password_change_resets_failure_counter` |
+| Трассировки исключений (`unhandled_exception`, `job_crashed`, исключения из stdlib-логгеров) содержали текст сообщений: `input_value` ошибок валидации (ответ модели, фрагменты договора), `DETAIL` PostgreSQL со значениями полей | `safe_exc_info_processor`: типы исключений и кадры стека без сообщений (`[message hidden]`), цепочки `cause/context` | `test_exception_messages_are_not_logged`; e2e `check-logs` |
+| Журнал аудита был append-only только на уровне кода | миграция `0006_audit_log_append_only` (неразрушающая): триггер запрещает UPDATE/DELETE строк `audit_log`; политика миграций допускает `op.execute` с пометкой `# non-destructive-sql:` только при отсутствии DROP/DELETE/TRUNCATE/UPDATE…SET/ALTER TABLE в SQL | `test_audit_log_is_append_only`, `test_non_destructive_sql_marker_rejects_data_changes`, `test_database` (upgrade/downgrade) |
+| `href` ссылки скачивания экспорта брался из ответа API без проверки | Zod: только `/api/exports/<id>/download` | `не превращает подменённую ссылку скачивания в href` |
+| `X-Forwarded-For` принимался от всей подсети edge | только от адреса nginx (`FRONTEND_EDGE_IP`); подсеть и адрес параметризованы (`EDGE_SUBNET`, `FRONTEND_EDGE_IP`) — нужно и для второго стенда | проверено на основном стенде: IP клиента в сессиях и аудите — `172.30.10.1`, не адрес nginx |
+| У `backend` и `frontend` не было лимитов памяти/процессов | `mem_limit`/`pids_limit` (1 ГБ/256, 256 МБ/64) | `docker compose config`, оба стенда работают |
+| Бэкап: файлы с правами по умолчанию, неполный бэкап оставался при ошибке, не фиксировалась ревизия схемы; восстановление `pg_restore --clean` оставляло таблицы более новой версии | `umask 077`, удаление неполного каталога, `MANIFEST` (`alembic_revision`), проверка ревизии перед восстановлением (код 3), пересоздание схемы `public` + `--exit-on-error` | e2e `backup-restore` на пустом стенде |
+| Readiness не показывала, работает ли worker | `checks.worker` (heartbeat ≤ 120 с), не влияет на готовность API; предупреждение на странице «Состояние» | `test_ready_with_migrated_database`, `предупреждает, что worker не отвечает…` |
+| Нет способа восстановить доступ при утере пароля единственного Superadmin (bootstrap повторно не выполняется) | `python -m app.cli reset-superadmin-password --email …`: временный пароль (выводится один раз), обязательная смена, завершение сессий, снятие блокировки входа, аудит `user.password_reset` (`via: cli`) | `test_cli_emergency_superadmin_password_reset` |
+
+Проверено без замечаний: scoped-доступ (`scoped.py`) на всех объектных маршрутах, аудит обращений Superadmin, CSRF (+ Origin) на всех изменяющих маршрутах и входе, отсутствие CORS, CSP/заголовки SPA и API, cookies, `hide_parameters=True`, ключи хранилища, лимиты загрузки/извлечения, SSRF-guard (живой вызов провайдера Ollama в частной сети в e2e), строгая схема ответов модели и детектор инъекций, облачное согласие, удаление документов.
+
+### Новые проверки
+- **`tests/integration/test_security_sweep.py`** — маршруты берутся из OpenAPI-схемы (48 маршрутов): без сессии → 401; все изменяющие без CSRF-токена → 403 `csrf_failed` (и с чужим Origin); `/api/admin/*`, `/api/users*` для Analyst и Viewer → 403; каждый маршрут с ID документа/версии/анализа/экспорта и `POST /api/analyses(/estimate)` для постороннего Analyst → 404 `*_not_found` без названия договора и без изменения данных (≥ 20 маршрутов); контроль — владелец достигает тех же объектов; отсутствие CORS-заголовков; append-only аудит; новый неклассифицированный маршрут ломает тест.
+- **E2E на отдельном чистом стенде** (`e2e/run.sh`, Playwright 1.63.0 + axe-core 4.13.0, mock-сервер с API Ollama; в приложение тестовый провайдер не добавлялся) — OPERATIONS §15.
+- **Аудит зависимостей**: `pip-audit`, `npm audit`, `pip-licenses`, лицензии npm production (LICENSES.md).
+
+### Документация
+`docs/SECURITY_AND_PRIVACY.md` (новый: данные и сроки хранения, передача третьим лицам, меры, результаты аудита, остаточные риски); `docs/OPERATIONS.md` — §3 (проверки, аудит зависимостей, e2e), §4–5 (миграции, бэкап/восстановление: MANIFEST, проверка ревизии, последствия восстановления), §6 (логи), §7 (доверенный прокси, лимиты контейнеров), §9 (лимит смены пароля), **§14** (health checks, лимиты и восстановление после сбоев, ротация секретов, обновления и откат, очистка документов, отключение облака, роль БД для production, смена URL Ollama, аварийное восстановление), **§15** (e2e-стенд); `README.md`; `docs/THREAT_MODEL.md` (статус мер 4.2, 4.6, 4.10); `docs/LICENSES.md` (dev-зависимости, итог проверки лицензий); `CLAUDE.md`.
+
+### Изменённые файлы
+Backend: `app/logging.py`, `app/services/{auth,audit,users}.py`, `app/api/health.py`, `app/cli.py`, `app/db/migrations/versions/20261017_0006_audit_log_append_only.py` (новый); тесты `tests/integration/test_security_sweep.py` (новый), `tests/integration/{test_auth_api,test_bootstrap,test_database}.py`, `tests/unit/{test_logging,test_migration_policy}.py`. Frontend: `src/api/analyses.ts`, `src/pages/StatusPage.tsx`, `src/i18n/ru.ts`, тесты `src/pages/StatusPage.test.tsx`, `src/pages/analyses/analyses.test.tsx`; e2e: `e2e/*.e2e.ts`, `e2e/helpers.ts`, `playwright.config.ts`, `tsconfig.e2e.json`, `tsconfig.json`, `package.json` (скрипты `e2e`, `lint`, `build`; dev: `@playwright/test`, `playwright-core` 1.63.0, `@axe-core/playwright` 4.13.0), `package-lock.json`, `.dockerignore`. Инфраструктура: `compose.yaml`, `.env.example`, `.gitignore`, `deploy/{backup,restore}.sh`, `e2e/` (новый: `run.sh`, `compose.e2e.yaml`, `mock-llm/`, `fixtures/`, `make_fixtures.py`). Документация: см. выше.
+
+### Проверки (реально запущены)
+PostgreSQL для тестов — временный контейнер `postgres:17-alpine` на `127.0.0.1:55432`.
+
+| Команда | Результат |
+|---|---|
+| `ruff check app tests` / `ruff format --check app tests` | `All checks passed!` / `147 files already formatted` |
+| `mypy app tests` (strict) | `Success: no issues found in 140 source files` |
+| `TEST_DATABASE_URL=… pytest -q` | `534 passed in 144.30s` |
+| `pytest -q` без `TEST_DATABASE_URL` | `312 passed, 222 skipped in 10.68s` |
+| `ruff check/format --check --config backend/pyproject.toml e2e` | `All checks passed!` / форматирование применено |
+| Миграции на чистой БД: `alembic upgrade head` → `alembic check` → `downgrade 0005_export_details` → `upgrade head` | `No new upgrade operations detected.`; head `0006_audit_log_append_only`; триггер `audit_log_append_only` существует |
+| `npm run typecheck` (приложение + e2e) / `npm run lint` (src + e2e) | без ошибок / exit 0 |
+| `npx vitest run` | `Test Files 7 passed (7)`, `Tests 82 passed (82)` |
+| `npm run build` | `✓ built`; основной чанк 403,64 КБ (125,61 КБ gzip) |
+| `pip-audit -r backend/requirements.lock --no-deps --disable-pip`; по dev-venv | `No known vulnerabilities found` (оба) |
+| `npm audit` / `npm audit --omit=dev` | `found 0 vulnerabilities` |
+| `pip-licenses` (63 пакета), лицензии npm production | копилефт — только PyMuPDF (AGPL), psycopg (LGPL), certifi и pathspec (MPL-2.0); npm production — все MIT |
+| **`bash e2e/run.sh all`** (чистый стенд `cai-e2e`: сборка образов, миграции на пустой БД, bootstrap) | exit 0 (≈ 7 мин): `flow` 2 passed, `recovery` 2 passed, `check-logs` — «логи чистые (609 строк)», `backup-restore` (схема `0006_audit_log_append_only`) — 1 passed; стенд удалён |
+| `docker compose up -d --build` (основной стенд) | все сервисы `healthy`; readiness 200, `checks`: database/migrations/accounts/storage/worker — `ok`; миграция 0006 применена, триггер есть; вход/выход через nginx, IP клиента определяется корректно |
+
+E2E подробно: `flow` — заголовки безопасности и CSP, 401 без сессии, отказ входа с чужим Origin; вход Superadmin из bootstrap → обязательная смена пароля → провайдер Ollama (mock, частная сеть) — проверка соединения и тестовая генерация (`json_schema` подтверждён) → загрузка PDF через UI → извлечение (`ready`, 2 стр., SHA-256 совпадает) → новый анализ через форму (оценка объёма) → `completed`; в отчёте: «Одностороннее изменение цены» и «Высокая неустойка» — «Подтверждён» (цитаты `exact`/`normalized`, `supports`, стр. 1, п. 2.2; через API — цитаты являются подстроками текста фрагментов), «Не определён порядок приёмки» — «Требует проверки» с областью поиска и без цитат, риск с выдуманной цитатой — `rejected`, скрыт по умолчанию и виден как «Не подтверждён» после переключателя; предупреждение о prompt injection (строка-инъекция в договоре); экспорт PDF (`%PDF`) и XLSX (`PK`) через UI, имя `contract-analysis-*`; аудит содержит `document.uploaded`, `analysis.started`, `export.created/downloaded` и не содержит текста и имени файла договора; axe (WCAG 2.1 A/AA) — 0 серьёзных/критических нарушений на страницах вход, обзор, договоры, карточка договора, новый анализ, отчёт. `recovery` — отмена во время вызова «медленной» модели → `cancelled` → повтор → `completed` (≈ 34 с); `SIGKILL` worker'а на этапе анализа частей → `docker compose up -d worker` → задача подхвачена после истечения lease, анализ `completed` с подтверждёнными рисками (≈ 2,6 мин). `check-logs` — в логах всех контейнеров (≈ 600 строк) нет фраз договора, паролей bootstrap/сменённого, `SECRET_KEY`, пароля БД и ключа шифрования. `backup-restore` — бэкап (схема `0006`) → `down -v` → пустой стенд → `restore.sh` (контрольные суммы, ревизия, пересоздание схемы, storage, migrate) → вход со сменённым паролем (bootstrap-пароль отклонён), SHA-256 оригинала совпадает, анализ `completed`, подтверждённые риски на месте. Визуальная проверка UI — по скриншотам Playwright при отладке сценария.
+
+### Ограничения
+- Live-проверки с реальными LLM на этапе 08 не проводились (платные запросы не нужны): e2e использует mock-сервер с API Ollama; живые OpenRouter/Ollama проверены на этапах 05–06.
+- Политика хранения документов добавлена после приёмки этапа (см. ниже); удалённые документы остаются в бэкапах до их ротации.
+- Шифрование бэкапов и выгрузка вне сервера — дополнительный этап 08A.
+- Приложение подключается к БД суперпользователем из образа `postgres` — он может отключить триггер аудита; отдельная роль БД описана как рекомендация (OPERATIONS §14.7), не внедрена и не проверена.
+- Общего rate limit на API нет (есть лимиты входа и смены пароля, очередей загрузки/экспорта, активных анализов); для публикации в интернет — лимиты на reverse proxy.
+- Lighthouse не запускался; доступность проверена axe-core на 6 страницах (только нарушения уровня serious/critical считаются ошибкой; moderate/minor не анализировались).
+- E2E-скрипт проверен в Git Bash на Windows (Docker Desktop); на Linux не запускался.
+- Восстановление после `SIGKILL` занимает до `JOB_LEASE_SECONDS` + 60 с (reaper).
+
+### Дополнение: политика хранения документов (2026-10-17, по запросу владельца)
+- **Настройка** `system_settings.document_retention` = `{"days": N | null}`, по умолчанию выключена. `GET /api/admin/retention` (Admin+; состояние, число документов к удалению, предпросмотр `?preview_days=N`), `PUT /api/admin/retention` (только Superadmin, `policies.can_manage_retention`): срок 1–3650 дней; включение и сокращение срока — только с `confirm: true` (иначе 409 `retention_confirmation_required` с числом документов), выключение и увеличение — без подтверждения; `config_revisions` + аудит `settings.updated`.
+- **Удаление** (`app/services/retention.py`, housekeeping worker'а раз в минуту, до 100 документов за проход, `FOR UPDATE SKIP LOCKED`): документы без активности дольше срока — загружены раньше срока, нет версий и анализов новее срока, нет активного анализа. Путь тот же, что у ручного удаления (`mark_for_deletion` → `purge_document`); аудит `document.deleted` без автора с `reason: retention`, `retention_days`.
+- **UI** «Настройки» → «Хранение документов»: состояние для Admin; для Superadmin — переключатель, срок, предупреждение с числом документов, которые будут удалены сразу, и обязательная отметка подтверждения (кнопка «Сохранить» до неё недоступна).
+- Файлы: `backend/app/services/retention.py` (новый), `app/api/settings.py`, `app/services/documents.py` (`mark_for_deletion` без автора), `app/security/policies.py`, `app/worker.py`; тесты `tests/integration/test_retention.py` (новый); frontend `src/pages/admin/RetentionSection.tsx` (новый), `SettingsPage.tsx`, `src/api/settings.ts`, `src/i18n/ru.ts`, `src/test/fixtures.ts`, тесты `src/pages/admin/retention.test.tsx` (новый), `src/pages/analyses/analyses.test.tsx`; документация — ARCHITECTURE §17, OPERATIONS §14.5, SECURITY_AND_PRIVACY §1, §11, §13. Миграция не нужна (таблица `system_settings` уже есть).
+
+| Команда | Результат |
+|---|---|
+| `ruff check` / `ruff format --check` / `mypy app tests` | `All checks passed!` / `149 files already formatted` / `Success: no issues found in 142 source files` |
+| `TEST_DATABASE_URL=… pytest -q` | `539 passed in 125.23s` |
+| `pytest -q` без БД | `312 passed, 227 skipped in 10.71s` |
+| `npm run typecheck` / `npm run lint` | без ошибок / exit 0 |
+| `npx vitest run` | `Test Files 8 passed (8)`, `Tests 86 passed (86)` |
+| `npm run build` | `✓ built` |
+| `bash e2e/run.sh all` (регрессия) | exit 0: `flow` 2 passed, `recovery` 2 passed, логи чистые (609 строк), `backup-restore` 1 passed |
+| Основной стенд `docker compose up -d --build` | readiness 200, все проверки `ok`; `GET /api/admin/retention` — `retention_days: null`; `PUT` без `confirm` → 409, настройка не изменилась (на локальных данных политика не включалась) |
+
+Покрыто тестами: выключено по умолчанию (старый документ не удаляется), Admin не меняет (403), Analyst не видит (403), предпросмотр, 409 без подтверждения с числом документов, недопустимый срок (0, 3651) → 422, включение, увеличение без подтверждения, сокращение — с подтверждением, выключение, аудит и история конфигурации; worker удаляет только неактивный документ (сохраняются: свежий, с новой версией, с недавним анализом, с идущим анализом), повторный проход ничего не трогает, аудит без автора с `reason: retention`, `purge_document` удаляет документ и анализы; после выключения удаления нет. UI: состояние для Admin без формы, включение с предпросмотром и обязательным подтверждением (тело запроса), недопустимый срок блокирует сохранение, выключение без подтверждения.

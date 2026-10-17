@@ -157,3 +157,32 @@ async def test_cli_exit_codes(api: ApiEnv, tmp_path: Path) -> None:
     assert await cli._bootstrap(boot_settings(api, tmp_path, bootstrap_enabled=False)) == 0
     await api.execute("UPDATE users SET is_active = false")
     assert await cli._bootstrap(boot_settings(api, tmp_path, bootstrap_enabled=False)) == 1
+
+
+async def test_cli_emergency_superadmin_password_reset(
+    api: ApiEnv, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Утерян пароль единственного Superadmin: сброс из консоли сервера, вход только с обязательной сменой."""
+    from app import cli
+
+    root = await api.create_user(UserRole.superadmin, email="Root@Example.org")
+    analyst = await api.create_user(UserRole.analyst)
+    old = await api.login(root)
+    capsys.readouterr()
+
+    assert await cli._reset_superadmin_password(api.settings, analyst.email) == 1  # только Superadmin
+    assert await cli._reset_superadmin_password(api.settings, "nobody@example.org") == 1
+    assert await cli._reset_superadmin_password(api.settings, " root@example.ORG ") == 0
+    temporary = capsys.readouterr().out.strip().splitlines()[-1]
+
+    async with old:
+        assert (await old.get("/api/auth/me")).status_code == 401  # прежние сессии завершены
+    async with api.client() as c:
+        r = await c.post("/api/auth/login", json={"email": root.email, "password": temporary})
+        assert r.status_code == 200
+        assert r.json()["must_change_password"] is True
+    rows = await api.rows(
+        "SELECT actor_user_id, details->>'via' FROM audit_log WHERE action = 'user.password_reset'"
+    )
+    assert [tuple(r) for r in rows] == [(None, "cli")]
+    assert temporary not in str(await api.rows("SELECT details FROM audit_log"))

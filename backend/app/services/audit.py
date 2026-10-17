@@ -27,6 +27,7 @@ class AuditAction(StrEnum):
     login_failed = "auth.login_failed"
     logout = "auth.logout"
     password_changed = "auth.password_changed"  # noqa: S105 - код действия, не пароль
+    password_change_failed = "auth.password_change_failed"  # noqa: S105
     session_revoked = "auth.session_revoked"
     # Пользователи
     user_bootstrap_created = "user.bootstrap_created"

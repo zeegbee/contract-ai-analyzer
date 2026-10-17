@@ -46,5 +46,16 @@
 | React, React Router, TanStack Query, Zod, React Hook Form | — | MIT | |
 | PostgreSQL (образ `postgres:17-alpine`) | 17 | PostgreSQL License | |
 | nginx (образ `nginx-unprivileged`) | — | BSD-2-Clause | |
+| certifi (зависимость httpx) | 2026.7.22 | MPL-2.0 | используется без изменений (набор корневых сертификатов) |
+| Playwright (`@playwright/test`, `playwright-core`) — только разработка | 1.63.0 | Apache-2.0 | e2e-тесты, в образы не входит |
+| axe-core, `@axe-core/playwright` — только разработка | 4.13.0 | MPL-2.0 | аудит доступности в e2e, в образы не входит |
 
-Полный перечень транзитивных зависимостей — в lock-файлах; автоматическая проверка лицензий (`pip-licenses` / `license-checker`) запланирована на этап 08 вместе с `pip-audit`/`npm audit`.
+Полный перечень транзитивных зависимостей — в lock-файлах.
+
+### Проверка лицензий (этап 08, 2026-10-17)
+
+- Python (`pip-licenses` по окружению backend, включая dev-зависимости, 63 пакета): копилефт — только PyMuPDF (AGPL-3.0, см. выше), psycopg/psycopg-binary (LGPL-3.0), certifi и pathspec (MPL-2.0; pathspec — только dev, через mypy/ruff). Остальные — MIT, BSD, Apache-2.0, PSF, ISC, HPND.
+- npm production-зависимости frontend (по `npm ls --omit=dev`): все установленные пакеты — MIT.
+- Уязвимости: `pip-audit -r backend/requirements.lock` и по dev-окружению — «No known vulnerabilities found»; `npm audit` — 0 уязвимостей.
+
+Команды — `docs/OPERATIONS.md` §3.

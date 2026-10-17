@@ -1,15 +1,23 @@
-"""Системные параметры для раздела «Настройки» (Admin/Superadmin, только чтение).
+"""Раздел «Настройки»: системные параметры (Admin/Superadmin, только чтение) и политика хранения документов.
 
-Значения задаются переменными окружения (docs/OPERATIONS.md); секретов, адресов БД и ключей здесь нет —
-только явно перечисленные лимиты. Облачные модели и текст предупреждения — `/api/admin/llm-settings`.
+Системные параметры задаются переменными окружения (docs/OPERATIONS.md); секретов, адресов БД и ключей
+здесь нет — только явно перечисленные лимиты. Облачные модели и текст предупреждения —
+`/api/admin/llm-settings`. Политику хранения (`/api/admin/retention`) видят Admin и Superadmin,
+меняет только Superadmin (`app.services.retention`).
 """
 
 from __future__ import annotations
 
-from fastapi import APIRouter
-from pydantic import BaseModel
+import uuid
+from datetime import datetime
+from typing import Annotated
 
-from app.api.deps import AdminAuth, AppSettings
+from fastapi import APIRouter, Query
+from pydantic import BaseModel, ConfigDict
+
+from app.api.deps import AdminAuth, AppSettings, Db
+from app.security import policies
+from app.services import retention
 
 router = APIRouter(tags=["settings"])
 
@@ -57,3 +65,57 @@ async def system_settings(auth: AdminAuth, settings: AppSettings) -> SystemSetti
         for group, keys in _GROUPS.items()
     }
     return SystemSettingsOut(groups=groups)
+
+
+class RetentionOut(BaseModel):
+    # null — автоматическое удаление выключено.
+    retention_days: int | None
+    updated_at: datetime | None
+    updated_by_id: uuid.UUID | None
+    # Сколько документов удаляется при текущем сроке (при выключенной политике — null).
+    eligible_now: int | None
+    # Предпросмотр для срока `preview_days` из запроса.
+    preview_days: int | None = None
+    preview_count: int | None = None
+    can_manage: bool
+    min_days: int = retention.MIN_DAYS
+    max_days: int = retention.MAX_DAYS
+
+
+class RetentionIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    retention_days: int | None
+    # Явное подтверждение: включение или сокращение срока сразу удаляет подходящие документы.
+    confirm: bool = False
+
+
+async def _retention_out(db: Db, auth: AdminAuth, preview_days: int | None) -> RetentionOut:
+    state = await retention.get_state(db)
+    eligible = await retention.count_eligible(db, state.retention_days) if state.retention_days else None
+    preview = await retention.count_eligible(db, preview_days) if preview_days else None
+    await db.commit()
+    return RetentionOut(
+        retention_days=state.retention_days,
+        updated_at=state.updated_at,
+        updated_by_id=state.updated_by_id,
+        eligible_now=eligible,
+        preview_days=preview_days,
+        preview_count=preview,
+        can_manage=policies.can_manage_retention(auth.user),
+    )
+
+
+@router.get("/admin/retention")
+async def get_retention(
+    auth: AdminAuth,
+    db: Db,
+    preview_days: Annotated[int | None, Query(ge=retention.MIN_DAYS, le=retention.MAX_DAYS)] = None,
+) -> RetentionOut:
+    return await _retention_out(db, auth, preview_days)
+
+
+@router.put("/admin/retention")
+async def put_retention(body: RetentionIn, auth: AdminAuth, db: Db) -> RetentionOut:
+    await retention.update(db, auth.user, auth.ip, days=body.retention_days, confirm=body.confirm)
+    return await _retention_out(db, auth, None)

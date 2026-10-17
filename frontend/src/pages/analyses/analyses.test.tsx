@@ -13,6 +13,7 @@ import {
   makeDocument,
   makeEvidence,
   makeRisk,
+  retentionHandler,
   RISKS,
 } from '../../test/fixtures'
 import { renderRoute } from '../../test/render'
@@ -345,7 +346,7 @@ describe('экспорт', () => {
     let created: unknown = null
     let listCalls = 0
     const queued = {
-      id: 'x-1',
+      id: 'e1e1e1e1-0000-4000-8000-000000000001',
       analysis_id: 'a-1',
       format: 'pdf',
       status: 'queued',
@@ -372,7 +373,7 @@ describe('экспорт', () => {
                   status: 'ready',
                   size_bytes: 20480,
                   expires_at: '2026-10-24T11:00:00Z',
-                  download_url: '/api/exports/x-1/download',
+                  download_url: '/api/exports/e1e1e1e1-0000-4000-8000-000000000001/download',
                 },
           ],
         })
@@ -385,9 +386,37 @@ describe('экспорт', () => {
     await waitFor(() => expect(created).toEqual({ format: 'pdf' }))
     expect(await screen.findByText(/· формируется…/)).toBeInTheDocument()
     const link = await screen.findByRole('link', { name: 'Скачать' }, { timeout: 6000 })
-    expect(link).toHaveAttribute('href', '/api/exports/x-1/download')
+    expect(link).toHaveAttribute('href', '/api/exports/e1e1e1e1-0000-4000-8000-000000000001/download')
     expect(screen.getByText(/20 КБ/)).toBeInTheDocument()
   }, 10_000)
+
+  it('не превращает подменённую ссылку скачивания в href', async () => {
+    serveMe(makeMe('viewer'))
+    server.use(
+      http.get('*/api/analyses/a-1/exports', () =>
+        HttpResponse.json({
+          items: [
+            {
+              id: 'e1e1e1e1-0000-4000-8000-000000000002',
+              analysis_id: 'a-1',
+              format: 'pdf',
+              status: 'ready',
+              created_at: '2026-10-17T11:00:00Z',
+              size_bytes: 10,
+              expires_at: null,
+              error_code: null,
+              download_url: 'javascript:alert(1)',
+            },
+          ],
+        }),
+      ),
+      ...analysisHandlers(makeAnalysis()),
+    )
+    renderRoute('/analyses/a-1')
+    expect(await screen.findByRole('heading', { name: 'Экспорт' })).toBeInTheDocument()
+    await waitFor(() => expect(screen.getAllByRole('alert').length).toBeGreaterThan(0))
+    expect(screen.queryByRole('link', { name: 'Скачать' })).not.toBeInTheDocument()
+  })
 
   it('экспорт недоступен до завершения анализа', async () => {
     serveMe(makeMe('analyst'))
@@ -519,6 +548,7 @@ describe('настройки', () => {
       http.get('*/api/admin/llm-settings', () =>
         HttpResponse.json({ cloud_models_enabled: false, cloud_notice: { version: '3', text: 'x' }, can_edit: false }),
       ),
+      retentionHandler(),
     )
     renderRoute('/admin/settings')
     expect(await screen.findByText('Лимит токенов на анализ')).toBeInTheDocument()

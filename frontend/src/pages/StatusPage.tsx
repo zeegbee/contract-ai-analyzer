@@ -37,6 +37,11 @@ export function StatusPage() {
           >
             {query.data.status === 'ready' ? ru.status.ready : ru.status.notReady}
           </p>
+          {query.data.checks.worker !== undefined && query.data.checks.worker !== 'ok' && (
+            <p role="alert" className="mt-2 text-sm text-amber-900">
+              {ru.status.workerDown}
+            </p>
+          )}
           <dl className="mt-3 grid grid-cols-[max-content_1fr] gap-x-6 gap-y-1 text-sm">
             {Object.entries(query.data.checks).map(([name, value]) => (
               <div key={name} className="contents">

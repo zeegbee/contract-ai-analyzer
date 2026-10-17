@@ -209,8 +209,18 @@ async def retry_extraction(db: AsyncSession, actor: User, ip: str | None, versio
     )
 
 
-async def mark_for_deletion(db: AsyncSession, actor: User, ip: str | None, document: Document) -> None:
-    """Документ сразу исчезает из выдачи; файлы и строки удаляет задача purge_document."""
+async def mark_for_deletion(
+    db: AsyncSession,
+    actor: User | None,
+    ip: str | None,
+    document: Document,
+    *,
+    extra: dict[str, object] | None = None,
+) -> None:
+    """Документ сразу исчезает из выдачи; файлы и строки удаляет задача purge_document.
+
+    `actor=None` — удаление системой (политика хранения), причина — в `extra`.
+    """
     shas = (
         await db.execute(select(DocumentVersion.sha256).where(DocumentVersion.document_id == document.id))
     ).scalars()
@@ -222,11 +232,11 @@ async def mark_for_deletion(db: AsyncSession, actor: User, ip: str | None, docum
     record(
         db,
         AuditAction.document_deleted,
-        actor_id=actor.id,
+        actor_id=actor.id if actor else None,
         target_type="document",
         target_id=document.id,
         ip=ip,
-        details={"sha256": list(shas), "owner_id": str(document.owner_id)},
+        details={"sha256": list(shas), "owner_id": str(document.owner_id), **(extra or {})},
     )
 
 

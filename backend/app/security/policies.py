@@ -121,6 +121,11 @@ def can_manage_llm_settings(actor: Actor) -> bool:
     return is_superadmin(actor)
 
 
+def can_manage_retention(actor: Actor) -> bool:
+    """Политика автоматического удаления документов по сроку — только Superadmin."""
+    return is_superadmin(actor)
+
+
 def ensure(allowed: bool) -> None:
     if not allowed:
         raise PermissionDenied()

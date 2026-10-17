@@ -2,6 +2,7 @@ import { http, HttpResponse } from 'msw'
 
 import type { AnalysisDetail, Evidence, Risk } from '../api/analyses'
 import type { DocumentDetail, Version } from '../api/documents'
+import type { Retention } from '../api/settings'
 
 /** Объекты API для MSW-обработчиков в тестах (синтетические, без реальных данных). */
 
@@ -270,3 +271,28 @@ export const analysisHandlers = (analysis: AnalysisDetail, risks: Risk[] = RISKS
   ),
   http.get('*/api/analyses/a-1/exports', () => HttpResponse.json({ items: [] })),
 ]
+
+export function makeRetention(overrides: Partial<Retention> = {}): Retention {
+  return {
+    retention_days: null,
+    updated_at: null,
+    updated_by_id: null,
+    eligible_now: null,
+    preview_days: null,
+    preview_count: null,
+    can_manage: false,
+    min_days: 1,
+    max_days: 3650,
+    ...overrides,
+  }
+}
+
+/** GET /api/admin/retention: `preview` — число документов для `preview_days` из запроса. */
+export function retentionHandler(state: Partial<Retention> = {}, preview?: (days: number) => number) {
+  return http.get('*/api/admin/retention', ({ request }) => {
+    const days = Number(new URL(request.url).searchParams.get('preview_days')) || null
+    return HttpResponse.json(
+      makeRetention({ ...state, preview_days: days, preview_count: days && preview ? preview(days) : null }),
+    )
+  })
+}

@@ -295,6 +295,45 @@ async def test_change_password_validation(api: ApiEnv, current: str, new: str, c
         assert new not in r.text and current not in r.text
 
 
+async def test_change_password_wrong_current_is_rate_limited(api: ApiEnv) -> None:
+    """С перехваченной сессией нельзя перебирать пароль через смену пароля."""
+    user = await api.create_user(UserRole.analyst)
+    c = await api.login(user)
+    limit = api.settings.login_max_failures_per_email
+    async with c:
+        for _ in range(limit):
+            r = await c.post("/api/auth/change-password", json=pw("Wrong-Current-Pass-1", NEW_PASSWORD))
+            assert r.json()["error"]["code"] == "invalid_current_password"
+        # Даже верный текущий пароль теперь отклоняется до истечения окна.
+        r = await c.post("/api/auth/change-password", json=pw(DEFAULT_PASSWORD, NEW_PASSWORD))
+        assert r.status_code == 429
+        assert r.json()["error"]["code"] == "password_change_rate_limited"
+        assert int(r.headers["Retry-After"]) > 0
+    # Это те же неудачи по e-mail, что и у входа: вход тоже временно заблокирован.
+    async with api.client() as fresh:
+        r = await fresh.post("/api/auth/login", json=creds(user.email, DEFAULT_PASSWORD))
+        assert r.status_code == 429
+    failed = await api.rows(
+        "SELECT details FROM audit_log WHERE action = 'auth.password_change_failed' AND target_id = :u",
+        u=str(user.id),
+    )
+    assert len(failed) == limit
+    assert all("Wrong-Current" not in json.dumps(row[0]) for row in failed)
+
+
+async def test_successful_password_change_resets_failure_counter(api: ApiEnv) -> None:
+    user = await api.create_user(UserRole.analyst)
+    c = await api.login(user)
+    async with c:
+        for _ in range(api.settings.login_max_failures_per_email - 1):
+            await c.post("/api/auth/change-password", json=pw("Wrong-Current-Pass-1", NEW_PASSWORD))
+        r = await c.post("/api/auth/change-password", json=pw(DEFAULT_PASSWORD, NEW_PASSWORD))
+        assert r.status_code == 200
+    async with api.client() as fresh:
+        r = await fresh.post("/api/auth/login", json=creds(user.email, "Wrong-Current-Pass-1"))
+        assert r.json()["error"]["code"] == "invalid_credentials"
+
+
 async def test_own_sessions_list_and_revoke(api: ApiEnv) -> None:
     user = await api.create_user(UserRole.viewer)
     stranger = await api.create_user(UserRole.viewer)

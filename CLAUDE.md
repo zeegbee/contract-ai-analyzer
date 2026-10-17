@@ -9,11 +9,11 @@
 - Кроме промптов есть **дополнительный этап 08A** (автоматические зашифрованные бэкапы с выгрузкой вне сервера, расписание, ротация) — описан в `docs/IMPLEMENTATION_PLAN.md`. Выполняется после 08 и до 09 (или раньше по явной команде пользователя); перед началом уточнить у пользователя значения из таблицы «по умолчанию».
 
 ## Текущее состояние (2026-10-17)
-- Ветка `main` (удалённых репозиториев нет). Закоммичены этапы 00–07 (последний — `Stage 07: UI, reports and exports`). Рабочее дерево чистое.
-- Следующий этап — промпт `08-...` (hardening). Ждать, пока пользователь пришлёт его. Затем — доп. этап 08A (бэкапы; сначала уточнить значения по умолчанию) и 09. Из этапов 06–07 в 08 перенесено: автоматический аудит доступности (axe/Lighthouse), визуальная проверка UI в браузере, `pip-audit`/`npm audit`, проверка лицензий, Playwright e2e.
+- Ветка `main` (удалённых репозиториев нет). Закоммичены этапы 00–07; этап 08 (hardening, e2e, документация эксплуатации и безопасности) выполнен — коммит `Stage 08: ...` по команде пользователя.
+- Следующий — доп. этап 08A (автоматические зашифрованные бэкапы; **сначала уточнить у пользователя значения из таблицы «по умолчанию»** в `docs/IMPLEMENTATION_PLAN.md`), затем промпт 09 (финальная приёмка).
 - Live-анализ практичен только на OpenRouter `gpt-4o-mini` (≈ 30 с, ≈ 0,002 USD); deepseek-r1 8B на CPU не укладывается в 900 с на вызов. При нагрузке CPU Ollama тормозит и тесты — не запускать проверки параллельно с Ollama.
 - Решение владельца: PyMuPDF (AGPL-3.0) остаётся, приложение только для внутреннего использования — `docs/LICENSES.md`.
-- В локальной БД Docker-стека — 4 синтетических документа smoke-теста этапа 04 и синтетический договор live-проверки этапа 06 с 3 анализами (2 завершены на `gpt-4o-mini`, 1 отменён) и 4 экспортами smoke-теста этапа 07 (владелец `root@example.org`); облачные модели выключены.
+- Основной стенд пересобран на коде этапа 08 (миграция `0006_audit_log_append_only` применена). В локальной БД Docker-стека — 4 синтетических документа smoke-теста этапа 04 и синтетический договор live-проверки этапа 06 с 3 анализами (2 завершены на `gpt-4o-mini`, 1 отменён) и 4 экспортами smoke-теста этапа 07 (владелец `root@example.org`); облачные модели выключены.
 - Локальный Docker-стек может быть запущен (`docker compose ps`). Локальный Superadmin — `root@example.org`; его текущий пароль не из `.env` (сменён при smoke-тесте) и в репозиторий не пишется — он в локальной памяти Claude или у пользователя. Открывать `http://localhost:8080` или `http://127.0.0.1:8080` (оба в `ALLOWED_ORIGINS`).
 - Live-проверено: Ollama на хосте (`http://host.docker.internal:11434`, deepseek-r1, CPU — медленно) и OpenRouter (ключ владельца введён через UI, `openai/gpt-4o-mini`). В локальной БД провайдер «Host Ollama» включён (таймаут 300 с), «OpenRouter» выключен, их модели (`deepseek-r1:latest`, `openai/gpt-4o-mini`) — выключены, `json_schema` подтверждена; облачные модели выключены. Платные запросы к OpenRouter без нужды не делать.
 
@@ -42,6 +42,9 @@
 - `backend/app/exports/` — экспорт (этап 07): `content.py` (данные отчёта, только перечисленные поля snapshot), `render.py` (PDF reportlab + шрифт `fonts/DejaVuSans*.ttf`, DOCX, CSV, XLSX), `safety.py` (`pdf_markup`, `cell` — formula injection, `clean_text`). Сервис — `app/services/exports.py` (задача `build_export`, `expire_exports` в housekeeping worker'а), API — `app/api/resources.py`; системные параметры — `app/api/settings.py` (импортируется в `main.py` как `settings_api`: имя `settings` занято переменной).
 - `frontend/src/pages/analyses/` — новый анализ, список, отчёт (`AnalysisPage`), `RiskCard`, `RisksSection` (фильтры на клиенте), `ExportPanel`; API — `src/api/analyses.ts`; ленивые страницы — `src/app/lazyPages.tsx`; тестовые фикстуры — `src/test/fixtures.ts` (`makeAnalysis`, `makeRisk`, `RISKS`, `analysisHandlers`), `src/test/handlers.ts` (`emptyOverviewHandlers` — `/` теперь «Обзор», статус системы — `/status`).
 - `converter/` — изолированный LibreOffice: `POST /convert?from=doc&to=docx|from=docx&to=pdf`.
+- `e2e/` — отдельный e2e-стенд (этап 08): `run.sh all|up|flow|recovery|check-logs|backup-restore|down` (проект Compose `cai-e2e`, порт 8091, подсеть 172.30.91.0/24, секреты в `e2e/.env.e2e`), `mock-llm/server.py` — mock с API Ollama (модели `e2e-mock:latest`, медленная `e2e-slow:latest`; ответ выбирается по свойствам JSON Schema в `format`), `fixtures/` + `make_fixtures.py`. Сценарии Playwright — `frontend/e2e/*.e2e.ts` (`flow`, `recovery`, `restore`), конфиг `frontend/playwright.config.ts`, типы — `frontend/tsconfig.e2e.json` (сборка `npm run build` его не проверяет, `npm run typecheck` — проверяет). Полный прогон ≈ 7 мин; стенд после успеха удаляется, после падения остаётся (`e2e/run.sh down`).
+- `backend/app/services/retention.py` — политика хранения документов (`system_settings.document_retention`, по умолчанию выключена; `GET/PUT /api/admin/retention`, менять — только Superadmin с `confirm`; удаление — в housekeeping worker'а через `mark_for_deletion`). UI — `frontend/src/pages/admin/RetentionSection.tsx`. **Не включать на локальном стенде без просьбы пользователя** — удалит его документы.
+- `backend/tests/integration/test_security_sweep.py` — перебор всех маршрутов из OpenAPI (401/CSRF/403/404 для постороннего). Новый маршрут без ID объекта в пути нужно внести в `SELF_ROUTES`/`PUBLIC_ROUTES`.
 - `compose.yaml` (корень), `compose.dev.yaml` (БД на 127.0.0.1:55432), `deploy/backup.sh|restore.sh`.
 
 ## Команды проверки
@@ -50,11 +53,13 @@
 cd backend
 .venv/Scripts/ruff check app tests && .venv/Scripts/ruff format --check app tests
 .venv/Scripts/mypy app tests
-TEST_DATABASE_URL=postgresql+psycopg://cai:devpass@127.0.0.1:55432/cai .venv/Scripts/python -m pytest -q   # ~2 мин, 520 тестов
+TEST_DATABASE_URL=postgresql+psycopg://cai:devpass@127.0.0.1:55432/cai .venv/Scripts/python -m pytest -q   # ~2,5 мин, 539 тестов
 # frontend
 cd frontend && npm run typecheck && npx oxlint --deny-warnings src && npx vitest run && npm run build
 # docker
 docker compose up -d --build && curl -s http://127.0.0.1:8080/api/health/ready
+# e2e (чистый стенд cai-e2e, Playwright; не запускать параллельно с другими тяжёлыми проверками)
+bash e2e/run.sh all
 ```
 Integration-тесты API: фикстура `api` (`tests/integration/conftest.py`) — `api.create_user(role)`, `api.login(user)` (клиент с cookie и `X-CSRF-Token`), `api.execute/rows/scalar(sql)`; таблицы очищаются TRUNCATE перед каждым тестом.
 Тестовая БД: `docker run -d --name cai-test-pg -e POSTGRES_PASSWORD=devpass -e POSTGRES_USER=cai -e POSTGRES_DB=cai -p 127.0.0.1:55432:5432 postgres:17-alpine` (после прогона удалить). Интеграционные тесты сами создают и удаляют временную БД `cai_test_*`.
@@ -90,3 +95,9 @@ Integration-тесты API: фикстура `api` (`tests/integration/conftest.
 - MSW: в одном `server.use(...)` приоритет у обработчиков, перечисленных раньше, — тестовые обработчики ставь перед общими (`analysisHandlers`).
 - Write-инструмент превращает `\uXXXX` в строковых литералах в сами символы — escape-последовательности вставляй скриптом с `\\u…`.
 - В API-тестах `async with client` не закрывает клиента (закрывает фикстура `api`) — клиента можно переиспользовать в нескольких блоках.
+- `audit_log` защищён триггером: UPDATE/DELETE строк падают (`append-only`); TRUNCATE в тестах работает. Пользователей не удалять (FK `ON DELETE SET NULL` на `audit_log` упадёт).
+- `op.execute` в миграции допускается без согласования только с пометкой `# non-destructive-sql:` (тест проверяет отсутствие DROP/DELETE/TRUNCATE/UPDATE…SET/ALTER TABLE в SQL `upgrade()`).
+- Трассировки исключений в логах выводятся без сообщений (`app/logging.py: format_exception_safely`) — для отладки воспроизводить локально.
+- Python-правки через `open(..., "w")` на Windows пишут CRLF: используйте `newline=""` или Edit/Write; перед коммитом проверяйте CRLF в изменённых файлах.
+- FastAPI 0.143: `app.routes` содержит вложенные роутеры — список маршрутов брать из `app.openapi()["paths"]`.
+- npm подтягивает peer-зависимости последних версий: версии, моложе двух недель, закрепляйте явно (так закреплён `playwright-core@1.63.0`).

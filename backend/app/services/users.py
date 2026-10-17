@@ -305,6 +305,35 @@ class UserService:
         await db.refresh(target)
         return target, temporary
 
+    async def emergency_reset_superadmin(self, db: AsyncSession, email: str) -> tuple[User, str]:
+        """Аварийный сброс пароля Superadmin из консоли (`python -m app.cli reset-superadmin-password`).
+
+        Для случая, когда пароль единственного Superadmin утерян: через UI сбросить его некому, а bootstrap
+        повторно не выполняется. Требует доступа к серверу; записывается в аудит без автора (`via: cli`).
+        """
+        stmt = select(User).where(func.lower(User.email) == email.strip().lower()).with_for_update()
+        target = (await db.execute(stmt)).scalar_one_or_none()
+        if target is None or target.role is not UserRole.superadmin:
+            raise NotFoundError("Superadmin с таким e-mail не найден", code="user_not_found")
+        temporary = generate_temporary_password()
+        target.password_hash = self.passwords.hash(temporary)
+        target.must_change_password = True
+        target.password_changed_at = utcnow()
+        target.failed_login_count = 0
+        target.locked_until = None
+        await self.limiter.reset(db, self.limiter.email_hash(target.email.strip().lower()))
+        revoked = await self.sessions.revoke_all(db, target.id, RevokeReason.password_reset)
+        record(
+            db,
+            AuditAction.user_password_reset,
+            actor_id=None,
+            target_type="user",
+            target_id=target.id,
+            details={"via": "cli", "revoked_sessions": revoked},
+        )
+        await db.commit()
+        return target, temporary
+
     async def revoke_sessions(self, db: AsyncSession, actor: Actor, user_id: uuid.UUID) -> int:
         await begin_admin_change(db, actor)
         target = await get_user(db, user_id)

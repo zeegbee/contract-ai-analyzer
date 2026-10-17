@@ -11,8 +11,8 @@ x-backend-env: &backend-env
   SECRETS_ENCRYPTION_KEYS: ${SECRETS_ENCRYPTION_KEYS:?SECRETS_ENCRYPTION_KEYS не задан}
   ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:?ALLOWED_ORIGINS не задан}
   COOKIE_SECURE: ${COOKIE_SECURE:-true}
-  # Доверяем X-Forwarded-* только от nginx из сети edge.
-  TRUSTED_PROXY_IPS: 172.30.10.0/24
+  # Доверяем X-Forwarded-* только от nginx (frontend) — его фиксированный адрес в сети edge.
+  TRUSTED_PROXY_IPS: ${FRONTEND_EDGE_IP:-172.30.10.10}
   LOG_LEVEL: ${LOG_LEVEL:-INFO}
   LOG_FORMAT: json
   STORAGE_DIR: /data/storage
@@ -93,6 +93,8 @@ services:
     networks: [edge, data, egress]
     depends_on:
       migrate: { condition: service_completed_successfully }
+    mem_limit: 1g
+    pids_limit: 256
     <<: *hardening
 
   worker:
@@ -140,9 +142,11 @@ services:
     tmpfs: ["/tmp:size=32m"]
     networks:
       edge:
-        ipv4_address: 172.30.10.10
+        ipv4_address: ${FRONTEND_EDGE_IP:-172.30.10.10}
     depends_on:
       backend: { condition: service_healthy }
+    mem_limit: 256m
+    pids_limit: 64
     <<: *hardening
 
   # Локальный Ollama (опционально): docker compose --profile ollama up -d
@@ -160,7 +164,9 @@ networks:
   edge:
     ipam:
       config:
-        - subnet: 172.30.10.0/24
+        # Подсеть и адрес frontend меняются через EDGE_SUBNET / FRONTEND_EDGE_IP (при пересечении с
+        # существующими сетями хоста или для второго стенда, см. e2e/).
+        - subnet: ${EDGE_SUBNET:-172.30.10.0/24}
   data:
     internal: true
   egress: {}

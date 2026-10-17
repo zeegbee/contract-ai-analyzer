@@ -107,9 +107,24 @@ async def test_ready_with_migrated_database(pg_settings: Settings) -> None:
             )
             await db.commit()
         r = await c.get("/api/health/ready")
+        # Worker не запущен: API готов, но это видно в отдельной проверке.
+        assert r.status_code == 200, r.text
+        assert r.json()["checks"] == {
+            "database": "ok",
+            "migrations": "ok",
+            "accounts": "ok",
+            "storage": "ok",
+            "worker": "unavailable",
+        }
         async with app.state.session_factory() as db:
-            await db.execute(text("TRUNCATE users CASCADE"))
+            await db.execute(
+                text("INSERT INTO worker_heartbeats (worker_id, version) VALUES ('w-ready-test', 'test')")
+            )
+            await db.commit()
+        r = await c.get("/api/health/ready")
+        async with app.state.session_factory() as db:
+            await db.execute(text("TRUNCATE users, worker_heartbeats CASCADE"))
             await db.commit()
     await app.state.engine.dispose()
     assert r.status_code == 200, r.text
-    assert r.json()["checks"] == {"database": "ok", "migrations": "ok", "accounts": "ok", "storage": "ok"}
+    assert r.json()["checks"]["worker"] == "ok"

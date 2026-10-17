@@ -1,0 +1,13 @@
+# e2e-стенд: отдельный проект Compose (`cai-e2e`) со своими volumes, подсетью и портом.
+# Добавляет к compose.yaml только mock-сервер LLM с API Ollama; приложение не меняется.
+# Запуск — через e2e/run.sh (создаёт e2e/.env.e2e со случайными секретами).
+services:
+  mock-llm:
+    build: ./e2e/mock-llm
+    image: contract-ai-analyzer/mock-llm:e2e
+    networks: [egress]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 128m
+    restart: "no"
