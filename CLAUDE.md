@@ -6,14 +6,16 @@
 - В конце каждого этапа: реально запустить тесты, линтеры, сборку (и Docker, если доступен), дописать раздел этапа в `docs/IMPLEMENTATION_STATUS.md` с командами и точными результатами, отчитаться пользователю на русском.
 - Коммит — только когда пользователь попросит; один коммит на этап, сообщение `Stage NN: ...`.
 - Открытые вопросы решены «по умолчанию» (см. конец `docs/IMPLEMENTATION_PLAN.md`).
-- Кроме промптов есть **дополнительный этап 08A** (автоматические зашифрованные бэкапы с выгрузкой вне сервера, расписание, ротация) — описан в `docs/IMPLEMENTATION_PLAN.md`. Выполняется после 08 и до 09 (или раньше по явной команде пользователя); перед началом уточнить у пользователя значения из таблицы «по умолчанию».
+- Кроме промптов был **дополнительный этап 08A** (автоматические зашифрованные бэкапы) — выполнен и закоммичен; финальная приёмка 09 должна проверить и его (OPERATIONS §16, `e2e/backup-offsite.sh`).
 
 ## Текущее состояние (2026-10-17)
-- Ветка `main` (удалённых репозиториев нет). Закоммичены этапы 00–08 (последний — `Stage 08: hardening, security sweep, e2e stand, operations docs`, включая политику хранения документов).
-- Этап 08A (автоматические зашифрованные бэкапы, настройки в UI + .env) выполнен 2026-10-17, ждёт коммита по команде пользователя (`git add --chmod=+x deploy/backup-schedule.sh e2e/backup-offsite.sh`). Следующий — промпт 09 (финальная приёмка).
+- Ветка `main` (удалённых репозиториев нет). Закоммичены этапы 00–08 и 08A (последний — `Stage 08A: encrypted off-server backups with schedule and UI settings`). Рабочее дерево чистое.
+- **Следующий — промпт `09-final-audit.md`** (финальная приёмка). Ждать, пока пользователь пришлёт его. Он ссылается на `docs/ACCEPTANCE_CHECKLIST.md`, которого в репозитории нет: чек-лист лежит в `contract-ai-analyzer-prompts/docs/ACCEPTANCE_CHECKLIST.md` (51 строка) — на этапе 09 скопировать в `docs/` и отмечать пункты с фактическими результатами. Не называть продукт production-ready, если проверки не выполнены.
+- Готовые средства проверки для 09: полный e2e `bash e2e/run.sh all` (≈ 15 мин: flow, recovery, check-logs, backup-restore, backup-offsite 11 проверок, restore); sweep-тест маршрутов; `pip-audit`/`npm audit` (команды — OPERATIONS §3). Последний полный e2e — exit 0 (2026-10-17).
+- Решения владельца на этапах 08/08A: политика хранения документов есть, по умолчанию выключена (не включать на локальном стенде — удалит документы); настройки бэкапа — в UI + `.env` (пути/ключи хранилища, ключ age, webhook — только `.env`); значения по умолчанию бэкапа — как в плане; реального внешнего хранилища нет (S3 проверен на `rclone serve s3`, образы MinIO недоступны).
 - Live-анализ практичен только на OpenRouter `gpt-4o-mini` (≈ 30 с, ≈ 0,002 USD); deepseek-r1 8B на CPU не укладывается в 900 с на вызов. При нагрузке CPU Ollama тормозит и тесты — не запускать проверки параллельно с Ollama.
 - Решение владельца: PyMuPDF (AGPL-3.0) остаётся, приложение только для внутреннего использования — `docs/LICENSES.md`.
-- Основной стенд пересобран на коде этапа 08 (миграция `0006_audit_log_append_only` применена). В локальной БД Docker-стека — 4 синтетических документа smoke-теста этапа 04 и синтетический договор live-проверки этапа 06 с 3 анализами (2 завершены на `gpt-4o-mini`, 1 отменён) и 4 экспортами smoke-теста этапа 07 (владелец `root@example.org`); облачные модели выключены.
+- Основной стенд пересобран на коде этапа 08A (head `0007_backup_runs`); бэкап там не настроен (цель none, планировщик на Windows не установлен — в «Настройках» ожидаемо предупреждение «планировщик не опрашивал»). e2e-стенд `cai-e2e` удалён; локально остались `e2e/.env.e2e` и `e2e/state/` (тестовый ключ age, бэкапы стенда; в `.gitignore`). В локальной БД Docker-стека — 4 синтетических документа smoke-теста этапа 04 и синтетический договор live-проверки этапа 06 с 3 анализами (2 завершены на `gpt-4o-mini`, 1 отменён) и 4 экспортами smoke-теста этапа 07 (владелец `root@example.org`); облачные модели выключены.
 - Локальный Docker-стек может быть запущен (`docker compose ps`). Локальный Superadmin — `root@example.org`; его текущий пароль не из `.env` (сменён при smoke-тесте) и в репозиторий не пишется — он в локальной памяти Claude или у пользователя. Открывать `http://localhost:8080` или `http://127.0.0.1:8080` (оба в `ALLOWED_ORIGINS`).
 - Live-проверено: Ollama на хосте (`http://host.docker.internal:11434`, deepseek-r1, CPU — медленно) и OpenRouter (ключ владельца введён через UI, `openai/gpt-4o-mini`). В локальной БД провайдер «Host Ollama» включён (таймаут 300 с), «OpenRouter» выключен, их модели (`deepseek-r1:latest`, `openai/gpt-4o-mini`) — выключены, `json_schema` подтверждена; облачные модели выключены. Платные запросы к OpenRouter без нужды не делать.
 
@@ -22,8 +24,9 @@
 2. `docs/ARCHITECTURE.md` — целевая архитектура (модель данных §5, RBAC §6, загрузка §8, анализ §9–11 и §9.4, провайдеры §12, очередь §13, UI §16.1, экспорт §17.1).
 3. `docs/THREAT_MODEL.md` — меры безопасности с привязкой к этапам.
 4. `docs/IMPLEMENTATION_PLAN.md` — состав этапов 02–09.
-5. `docs/OPERATIONS.md` — запуск, тесты, миграции, бэкапы.
-6. `git log --oneline`, `git status`.
+5. `docs/OPERATIONS.md` — запуск, тесты, миграции, бэкапы (§5, §16), обслуживание и аварийное восстановление (§14), e2e (§15).
+6. `docs/SECURITY_AND_PRIVACY.md` — данные, меры защиты, результаты аудита этапа 08, остаточные риски.
+7. `git log --oneline`, `git status`.
 
 ## Структура
 - `backend/` — FastAPI, SQLAlchemy 2 (async, psycopg 3), Alembic (`app/db/migrations`), worker (`app/worker.py`), очередь задач в PostgreSQL (`app/jobs/`), обработчики задач регистрируются через `@register("type")` в `app/jobs/registry.py`.
@@ -32,7 +35,7 @@
   - `app/api/deps.py` — зависимости: `Db`, `Auth` (проверка сессии + CSRF для изменяющих методов + `must_change_password`), `AuthPasswordChange`, `AdminAuth`. Новые эндпоинты: всегда через `Auth`/`AdminAuth`, объекты — только через `scoped.py`.
   - `app/api/documents.py` — документы (загрузка, текст, файл, удаление, доступ); `app/api/resources.py` — пока read-only `/analyses/{id}`, `/exports/{id}` (расширяются на этапах 06–07). Доступ Superadmin к чужому документу аудируется (`document.accessed_by_superadmin`); `scoped.get_version_for` проверяет версию через документ из URL.
   - `app/jobs/handlers/` — обработчики задач; регистрируются импортом в `handlers/__init__.py` (worker импортирует пакет). Новый тип задачи — добавить модуль туда.
-  - `app/schemas/` — Pydantic DTO; `app/cli.py` — `python -m app.cli bootstrap`.
+  - `app/schemas/` — Pydantic DTO; `app/cli.py` — `python -m app.cli bootstrap | rotate-secrets | reset-superadmin-password | backup-plan | backup-report`.
 - `frontend/` — React 19 + TS strict + Vite + Tailwind 4 + React Router 7 + TanStack Query + Zod; тексты UI в `src/i18n/ru.ts`; nginx-образ.
   - `src/app/session.ts` (`useMe`, `useCurrentUser` — из контекста `RequireAuth`), `src/app/guards.tsx` (`RequireAuth`, `RequireCapability` — только UX), `src/components/ui.tsx` (Button, Field, Notice, PageTitle), API-модули в `src/api/` (zod-схемы ответов).
   - Тесты: MSW + `src/test/auth.ts` (`makeMe(role)`, `serveMe(me|null)`, `readyHandler`); страница входа запрашивает `/api/health/ready` — в тестах нужен обработчик.
