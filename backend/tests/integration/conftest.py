@@ -29,7 +29,7 @@ _PASSWORDS = PasswordService(TEST_PARAMS)
 # Все таблицы, которые затрагивают тесты этапа 03 (CASCADE очищает зависимые).
 _TRUNCATE = text(
     "TRUNCATE users, sessions, login_attempts, audit_log, system_settings, documents, "
-    "provider_configs, config_revisions, jobs, worker_heartbeats CASCADE"
+    "provider_configs, config_revisions, jobs, worker_heartbeats, backup_runs CASCADE"
 )
 
 

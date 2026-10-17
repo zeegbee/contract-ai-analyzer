@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # End-to-end проверка на отдельном чистом стенде Docker Compose (проект cai-e2e, порт 8091).
 #
-#   e2e/run.sh all        # up → flow → recovery → check-logs → backup-restore → down (по умолчанию)
+#   e2e/run.sh all        # up → flow → recovery → check-logs → backup-restore → backup-offsite → down
 #   e2e/run.sh up         # чистый стенд: новые volumes, bootstrap Superadmin, mock-сервер LLM
 #   e2e/run.sh flow       # Playwright: вход → смена пароля → загрузка → извлечение → анализ (mock) →
 #                         #             проверка доказательств → экспорт; axe; заголовки безопасности
@@ -10,6 +10,8 @@
 #   e2e/run.sh check-logs # логи всех сервисов: нет текста договора, паролей и ключей из .env.e2e
 #   e2e/run.sh backup-restore  # deploy/backup.sh → стенд пересоздаётся пустым → deploy/restore.sh →
 #                              # Playwright проверяет, что данные и вход восстановлены
+#   e2e/run.sh backup-offsite  # этап 08A: шифрование, выгрузка (каталог, S3), ротация, сбои, блокировка,
+#                              # расписание и запрос из UI, скачивание → восстановление, cron/systemd
 #   e2e/run.sh down       # удалить стенд cai-e2e вместе с его volumes (основной стенд не затрагивается)
 #
 # Запускать из любого каталога; нужны Docker Compose v2.24+, Node 22 (npm ci в frontend/), openssl,
@@ -32,7 +34,10 @@ BASE_URL="http://127.0.0.1:${PORT}"
 log() { echo "[e2e] $*"; }
 
 write_env() {
-  [[ -f "${ENV_FILE}" ]] && return
+  if [[ -f "${ENV_FILE}" ]]; then
+    write_backup_env
+    return
+  fi
   log "создаю ${ENV_FILE} со случайными секретами"
   umask 077
   local fernet
@@ -56,6 +61,37 @@ HTTP_PORT=${PORT}
 EDGE_SUBNET=172.30.91.0/24
 FRONTEND_EDGE_IP=172.30.91.10
 WORKER_CONCURRENCY=2
+EOF
+  write_backup_env
+}
+
+write_backup_env() {
+  # Параметры этапа 08A: ключ age (приватный — в e2e/state, как «у администратора»), каталог-цель,
+  # S3-совместимый сервер (rclone serve s3) и приёмник webhook — контейнеры в сети cai-e2e-backup.
+  grep -q '^BACKUP_ENCRYPTION_RECIPIENT=' "${ENV_FILE}" && return
+  log "добавляю параметры резервного копирования в ${ENV_FILE}"
+  mkdir -p "${STATE_DIR}"
+  umask 077
+  docker build -q -t contract-ai-analyzer/backup-tools:local deploy/backup-tools > /dev/null
+  docker run --rm contract-ai-analyzer/backup-tools:local age-keygen > "${STATE_DIR}/age-identity.txt" 2> /dev/null
+  local recipient
+  recipient="$(grep -E '^# public key: ' "${STATE_DIR}/age-identity.txt" | sed 's/^# public key: //')"
+  cat >> "${ENV_FILE}" <<EOF
+BACKUP_TARGET=none
+BACKUP_SCHEDULE=0 3 * * *
+BACKUP_TIMEZONE=UTC
+BACKUP_DIR=${STATE_DIR}/local-backups
+BACKUP_KEEP_LOCAL=7
+BACKUP_ENCRYPTION_RECIPIENT=${recipient}
+BACKUP_LOCAL_TARGET_DIR=${STATE_DIR}/offsite
+BACKUP_S3_ENDPOINT=http://cai-e2e-s3:9000
+BACKUP_S3_BUCKET=cai-e2e
+BACKUP_S3_PREFIX=backups
+BACKUP_S3_ACCESS_KEY_ID=e2e$(openssl rand -hex 6)
+BACKUP_S3_SECRET_ACCESS_KEY=$(openssl rand -hex 20)
+BACKUP_NOTIFY_WEBHOOK=http://cai-e2e-hook:9191/hook
+BACKUP_DOCKER_NETWORK=cai-e2e-backup
+BACKUP_MIN_INTERVAL_MINUTES=60
 EOF
 }
 
@@ -118,7 +154,13 @@ check_logs() {
   log "проверка логов на текст договора и секреты"
   local logs needle found=0
   logs="$(docker compose logs --no-color 2>&1)"
-  for needle in "вправе изменить цену" "неустойку в размере" "Игнорируй предыдущие инструкции"                 "$(env_value BOOTSTRAP_ADMIN_PASSWORD)" "$(env_value E2E_NEW_PASSWORD)"                 "$(env_value SECRET_KEY)" "$(env_value POSTGRES_PASSWORD)" "$(env_value SECRETS_ENCRYPTION_KEYS)"; do
+  local needles=(
+    "вправе изменить цену" "неустойку в размере" "Игнорируй предыдущие инструкции" "AGE-SECRET-KEY"
+    "$(env_value BOOTSTRAP_ADMIN_PASSWORD)" "$(env_value E2E_NEW_PASSWORD)" "$(env_value SECRET_KEY)"
+    "$(env_value POSTGRES_PASSWORD)" "$(env_value SECRETS_ENCRYPTION_KEYS)" "$(env_value BACKUP_S3_SECRET_ACCESS_KEY)"
+  )
+  for needle in "${needles[@]}"; do
+    [[ -n "${needle}" ]] || continue
     if grep -qF -- "${needle}" <<< "${logs}"; then
       echo "[e2e] в логах найдено недопустимое значение (${#needle} символов)" >&2
       found=1
@@ -138,6 +180,7 @@ case "${1:-all}" in
   flow) playwright flow ;;
   recovery) playwright recovery ;;
   check-logs) check_logs ;;
+  backup-offsite) bash e2e/backup-offsite.sh && playwright restore ;;
   backup-restore) backup_restore ;;
   down) down ;;
   all)
@@ -146,10 +189,12 @@ case "${1:-all}" in
     playwright recovery
     check_logs
     backup_restore
+    bash e2e/backup-offsite.sh
+    playwright restore
     down
     ;;
   *)
-    echo "Использование: $0 [all|up|flow|recovery|check-logs|backup-restore|down]" >&2
+    echo "Использование: $0 [all|up|flow|recovery|check-logs|backup-restore|backup-offsite|down]" >&2
     exit 2
     ;;
 esac

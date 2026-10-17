@@ -6,6 +6,7 @@ import { fetchSystemSettings } from '../../api/settings'
 import { ErrorNotice } from '../../components/ErrorNotice'
 import { PageTitle } from '../../components/ui'
 import { ru } from '../../i18n/ru'
+import { BackupSection } from './BackupSection'
 import { RetentionSection } from './RetentionSection'
 
 const t = ru.settings
@@ -39,6 +40,8 @@ export function SettingsPage() {
       </section>
 
       <RetentionSection />
+
+      <BackupSection />
 
       <p className="text-sm text-slate-700">{t.readOnly}</p>
       {system.isPending && <p>{ru.common.loading}</p>}

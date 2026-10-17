@@ -102,6 +102,27 @@ class Settings(BaseSettings):
     # Не больше N экспортов одного пользователя в очереди (защита от DoS).
     max_pending_exports_per_user: int = Field(default=10, ge=1, le=1000)
 
+    # --- Резервное копирование (этап 08A, docs/OPERATIONS.md §16) ---
+    # Значения по умолчанию из .env; Superadmin может переопределить часть из них в UI (system_settings).
+    # Хранятся строками и проверяются мягко (app.services.backup): ошибка в настройках бэкапа
+    # показывается в UI и останавливает бэкап, но не мешает запуску приложения.
+    # Учётные данные S3 и адрес webhook приложению не передаются — их читает только скрипт на хосте.
+    backup_target: str = "none"
+    backup_schedule: str = "0 3 * * *"
+    backup_timezone: str = "UTC"
+    backup_keep_local: str = "7"
+    backup_keep_remote_daily: str = "7"
+    backup_keep_remote_weekly: str = "4"
+    backup_keep_remote_monthly: str = "6"
+    backup_remote_prune: str = ""
+    backup_dir: str = "./backups"
+    backup_local_target_dir: str = ""
+    backup_s3_endpoint: str = ""
+    backup_s3_bucket: str = ""
+    backup_s3_prefix: str = ""
+    backup_encryption_recipient: str = ""
+    backup_min_interval_minutes: str = "60"
+
     # --- Сессии и вход ---
     session_idle_minutes: int = Field(default=480, ge=5, le=7 * 24 * 60)
     session_absolute_hours: int = Field(default=168, ge=1, le=90 * 24)

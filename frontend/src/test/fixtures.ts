@@ -2,6 +2,7 @@ import { http, HttpResponse } from 'msw'
 
 import type { AnalysisDetail, Evidence, Risk } from '../api/analyses'
 import type { DocumentDetail, Version } from '../api/documents'
+import type { BackupConfig, BackupState } from '../api/backup'
 import type { Retention } from '../api/settings'
 
 /** Объекты API для MSW-обработчиков в тестах (синтетические, без реальных данных). */
@@ -296,3 +297,43 @@ export function retentionHandler(state: Partial<Retention> = {}, preview?: (days
     )
   })
 }
+
+const BACKUP_CONFIG: BackupConfig = {
+  schedule_enabled: true,
+  schedule: '0 3 * * *',
+  timezone: 'UTC',
+  target: 'none',
+  keep_local: 7,
+  keep_remote_daily: 7,
+  keep_remote_weekly: 4,
+  keep_remote_monthly: 6,
+  remote_prune: 'lifecycle',
+}
+
+export function makeBackupState(overrides: Partial<BackupState> = {}): BackupState {
+  return {
+    config: BACKUP_CONFIG,
+    sources: Object.fromEntries(Object.keys(BACKUP_CONFIG).map((k) => [k, 'env'])) as BackupState['sources'],
+    env: BACKUP_CONFIG,
+    server: {
+      backup_dir: './backups',
+      min_interval_minutes: 60,
+      s3: { configured: false, endpoint: null, bucket: null, prefix: null },
+      local: { configured: true, dir: '/mnt/nas/cai' },
+      encryption: { configured: true, valid: true, recipient_hint: 'age1abcd…wxyz12' },
+    },
+    problems: [],
+    previous_run_at: '2026-10-17T03:00:00Z',
+    next_run_at: '2026-10-18T03:00:00Z',
+    scheduler_seen_at: new Date().toISOString(),
+    requested_at: null,
+    last_success_at: '2026-10-17T03:01:00Z',
+    overdue: false,
+    runs: [],
+    can_manage: false,
+    ...overrides,
+  }
+}
+
+export const backupHandler = (state: Partial<BackupState> = {}) =>
+  http.get('*/api/admin/backup', () => HttpResponse.json(makeBackupState(state)))

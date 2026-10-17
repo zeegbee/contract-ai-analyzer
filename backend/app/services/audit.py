@@ -65,6 +65,10 @@ class AuditAction(StrEnum):
     analysis_retried = "analysis.retried"
     export_created = "export.created"
     export_downloaded = "export.downloaded"
+    # Резервное копирование (этап 08A)
+    backup_requested = "backup.requested"
+    backup_completed = "backup.completed"
+    backup_failed = "backup.failed"
 
 
 def _safe_details(details: dict[str, Any] | None) -> dict[str, Any]:

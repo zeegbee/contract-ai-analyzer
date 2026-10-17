@@ -180,3 +180,17 @@ class ExportStatus(StrEnum):
     ready = "ready"
     failed = "failed"
     expired = "expired"
+
+
+class BackupRunStatus(StrEnum):
+    running = "running"
+    success = "success"
+    failed = "failed"
+    # Запуск не сообщил о завершении (хост перезагружен, скрипт убит) — закрывается автоматически.
+    interrupted = "interrupted"
+
+
+class BackupTrigger(StrEnum):
+    scheduled = "scheduled"  # по расписанию (deploy/backup.sh --scheduled)
+    requested = "requested"  # «Запустить сейчас» в UI, выполнен планировщиком
+    manual = "manual"  # deploy/backup.sh вручную на сервере

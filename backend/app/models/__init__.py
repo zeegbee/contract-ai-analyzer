@@ -3,7 +3,7 @@
 from app.models.analyses import Analysis, AnalysisChunk, AnalysisRisk, RiskEvidence
 from app.models.catalog import ModelConfig, ProviderConfig
 from app.models.documents import Document, DocumentFragment, DocumentPage, DocumentVersion
-from app.models.system import AuditLog, ConfigRevision, Export, Job, SystemSetting, WorkerHeartbeat
+from app.models.system import AuditLog, BackupRun, ConfigRevision, Export, Job, SystemSetting, WorkerHeartbeat
 from app.models.users import (
     ConsentRecord,
     DocumentAccess,
@@ -18,6 +18,7 @@ __all__ = [
     "AnalysisChunk",
     "AnalysisRisk",
     "AuditLog",
+    "BackupRun",
     "ConfigRevision",
     "ConsentRecord",
     "Document",

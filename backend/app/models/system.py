@@ -6,12 +6,22 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import BigInteger, ForeignKey, Identity, Index, Integer, String, UniqueConstraint, text
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    ForeignKey,
+    Identity,
+    Index,
+    Integer,
+    String,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.dialects.postgresql import INET, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, CreatedAt, Timestamps, UUIDPk, str_enum, tz_datetime
-from app.models.enums import ExportFormat, ExportStatus, JobStatus
+from app.models.enums import BackupRunStatus, BackupTrigger, ExportFormat, ExportStatus, JobStatus
 
 
 class Job(UUIDPk, Timestamps, Base):
@@ -129,3 +139,30 @@ class WorkerHeartbeat(Base):
     started_at: Mapped[datetime] = tz_datetime(nullable=False, server_default=text("now()"))
     last_seen_at: Mapped[datetime] = tz_datetime(nullable=False, server_default=text("now()"))
     version: Mapped[str] = mapped_column(String(32), nullable=False)
+
+
+class BackupRun(UUIDPk, Base):
+    """Запуск резервного копирования: сообщает скрипт на хосте (`python -m app.cli backup-report`).
+
+    Только метаданные: имя архива, размер, результат выгрузки и проверки, код ошибки.
+    """
+
+    __tablename__ = "backup_runs"
+
+    started_at: Mapped[datetime] = tz_datetime(nullable=False, server_default=text("now()"))
+    finished_at: Mapped[datetime | None] = tz_datetime(nullable=True)
+    status: Mapped[BackupRunStatus] = mapped_column(
+        str_enum(BackupRunStatus, "backup_run_status"), nullable=False
+    )
+    trigger: Mapped[BackupTrigger] = mapped_column(str_enum(BackupTrigger, "backup_trigger"), nullable=False)
+    target: Mapped[str] = mapped_column(String(16), nullable=False)
+    encrypted: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    size_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    uploaded: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    verified: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    pruned_local: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    pruned_remote: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    __table_args__ = (Index("ix_backup_runs_started", "started_at"),)

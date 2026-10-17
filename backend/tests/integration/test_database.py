@@ -43,6 +43,7 @@ EXPECTED_TABLES = {
     "system_settings",
     "config_revisions",
     "worker_heartbeats",
+    "backup_runs",
     "alembic_version",
 }
 

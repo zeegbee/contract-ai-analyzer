@@ -126,6 +126,11 @@ def can_manage_retention(actor: Actor) -> bool:
     return is_superadmin(actor)
 
 
+def can_manage_backup(actor: Actor) -> bool:
+    """Настройки резервного копирования и «Запустить сейчас» — только Superadmin."""
+    return is_superadmin(actor)
+
+
 def ensure(allowed: bool) -> None:
     if not allowed:
         raise PermissionDenied()

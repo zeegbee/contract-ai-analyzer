@@ -9,8 +9,8 @@
 - Кроме промптов есть **дополнительный этап 08A** (автоматические зашифрованные бэкапы с выгрузкой вне сервера, расписание, ротация) — описан в `docs/IMPLEMENTATION_PLAN.md`. Выполняется после 08 и до 09 (или раньше по явной команде пользователя); перед началом уточнить у пользователя значения из таблицы «по умолчанию».
 
 ## Текущее состояние (2026-10-17)
-- Ветка `main` (удалённых репозиториев нет). Закоммичены этапы 00–07; этап 08 (hardening, e2e, документация эксплуатации и безопасности) выполнен — коммит `Stage 08: ...` по команде пользователя.
-- Следующий — доп. этап 08A (автоматические зашифрованные бэкапы; **сначала уточнить у пользователя значения из таблицы «по умолчанию»** в `docs/IMPLEMENTATION_PLAN.md`), затем промпт 09 (финальная приёмка).
+- Ветка `main` (удалённых репозиториев нет). Закоммичены этапы 00–08 (последний — `Stage 08: hardening, security sweep, e2e stand, operations docs`, включая политику хранения документов).
+- Этап 08A (автоматические зашифрованные бэкапы, настройки в UI + .env) выполнен 2026-10-17, ждёт коммита по команде пользователя (`git add --chmod=+x deploy/backup-schedule.sh e2e/backup-offsite.sh`). Следующий — промпт 09 (финальная приёмка).
 - Live-анализ практичен только на OpenRouter `gpt-4o-mini` (≈ 30 с, ≈ 0,002 USD); deepseek-r1 8B на CPU не укладывается в 900 с на вызов. При нагрузке CPU Ollama тормозит и тесты — не запускать проверки параллельно с Ollama.
 - Решение владельца: PyMuPDF (AGPL-3.0) остаётся, приложение только для внутреннего использования — `docs/LICENSES.md`.
 - Основной стенд пересобран на коде этапа 08 (миграция `0006_audit_log_append_only` применена). В локальной БД Docker-стека — 4 синтетических документа smoke-теста этапа 04 и синтетический договор live-проверки этапа 06 с 3 анализами (2 завершены на `gpt-4o-mini`, 1 отменён) и 4 экспортами smoke-теста этапа 07 (владелец `root@example.org`); облачные модели выключены.
@@ -45,7 +45,8 @@
 - `e2e/` — отдельный e2e-стенд (этап 08): `run.sh all|up|flow|recovery|check-logs|backup-restore|down` (проект Compose `cai-e2e`, порт 8091, подсеть 172.30.91.0/24, секреты в `e2e/.env.e2e`), `mock-llm/server.py` — mock с API Ollama (модели `e2e-mock:latest`, медленная `e2e-slow:latest`; ответ выбирается по свойствам JSON Schema в `format`), `fixtures/` + `make_fixtures.py`. Сценарии Playwright — `frontend/e2e/*.e2e.ts` (`flow`, `recovery`, `restore`), конфиг `frontend/playwright.config.ts`, типы — `frontend/tsconfig.e2e.json` (сборка `npm run build` его не проверяет, `npm run typecheck` — проверяет). Полный прогон ≈ 7 мин; стенд после успеха удаляется, после падения остаётся (`e2e/run.sh down`).
 - `backend/app/services/retention.py` — политика хранения документов (`system_settings.document_retention`, по умолчанию выключена; `GET/PUT /api/admin/retention`, менять — только Superadmin с `confirm`; удаление — в housekeeping worker'а через `mark_for_deletion`). UI — `frontend/src/pages/admin/RetentionSection.tsx`. **Не включать на локальном стенде без просьбы пользователя** — удалит его документы.
 - `backend/tests/integration/test_security_sweep.py` — перебор всех маршрутов из OpenAPI (401/CSRF/403/404 для постороннего). Новый маршрут без ID объекта в пути нужно внести в `SELF_ROUTES`/`PUBLIC_ROUTES`.
-- `compose.yaml` (корень), `compose.dev.yaml` (БД на 127.0.0.1:55432), `deploy/backup.sh|restore.sh`.
+- `compose.yaml` (корень), `compose.dev.yaml` (БД на 127.0.0.1:55432).
+- Резервное копирование (этап 08A, OPERATIONS §16): `deploy/backup.sh` (`--scheduled|--check|--list|--fetch`, `<каталог>` — прежний простой режим), `deploy/restore.sh` (каталог или `.tar.age --identity`), `deploy/backup-schedule.sh` (systemd/cron, опрос раз в 5 мин), `deploy/lib/backup-common.sh` (чтение .env без исполнения, GFS-ротация, блокировка flock/mkdir), образ `deploy/backup-tools` (age, rclone, curl). Backend: `app/backup/cron.py`, `app/services/backup.py` (настройки UI поверх `BACKUP_*`, план, отчёты), `app/api/backup.py` (`/api/admin/backup`, `/run`), CLI `backup-plan`/`backup-report`, таблица `backup_runs` (миграция 0007). UI — `frontend/src/pages/admin/BackupSection.tsx`. Тест — `e2e/backup-offsite.sh` (шаг `e2e/run.sh backup-offsite`; S3 — `rclone serve s3`, т.к. образы MinIO недоступны). Скрипт на хосте принимает от приложения только белый список ключей; пути/ключи хранилища — только из .env.
 
 ## Команды проверки
 ```bash
@@ -53,7 +54,7 @@
 cd backend
 .venv/Scripts/ruff check app tests && .venv/Scripts/ruff format --check app tests
 .venv/Scripts/mypy app tests
-TEST_DATABASE_URL=postgresql+psycopg://cai:devpass@127.0.0.1:55432/cai .venv/Scripts/python -m pytest -q   # ~2,5 мин, 539 тестов
+TEST_DATABASE_URL=postgresql+psycopg://cai:devpass@127.0.0.1:55432/cai .venv/Scripts/python -m pytest -q   # ~2,5 мин, 571 тест
 # frontend
 cd frontend && npm run typecheck && npx oxlint --deny-warnings src && npx vitest run && npm run build
 # docker

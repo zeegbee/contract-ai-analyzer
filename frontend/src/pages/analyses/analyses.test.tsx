@@ -13,6 +13,7 @@ import {
   makeDocument,
   makeEvidence,
   makeRisk,
+  backupHandler,
   retentionHandler,
   RISKS,
 } from '../../test/fixtures'
@@ -549,12 +550,15 @@ describe('настройки', () => {
         HttpResponse.json({ cloud_models_enabled: false, cloud_notice: { version: '3', text: 'x' }, can_edit: false }),
       ),
       retentionHandler(),
+      backupHandler(),
     )
     renderRoute('/admin/settings')
     expect(await screen.findByText('Лимит токенов на анализ')).toBeInTheDocument()
     expect(screen.getByText('1 500 000')).toBeInTheDocument()
     expect(screen.getByText('Облачные модели выключены')).toBeInTheDocument()
-    expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
+    // Admin ничего не редактирует: поля резервного копирования только для чтения.
+    expect(await screen.findByText('Изменять параметры может только Superadmin.')).toBeInTheDocument()
+    for (const field of screen.queryAllByRole('textbox')) expect(field).toBeDisabled()
   })
 
   it('аналитику настройки недоступны', async () => {
