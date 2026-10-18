@@ -129,6 +129,7 @@ bash e2e/run.sh all
 
 | Документ | Содержание |
 |---|---|
+| [docs/USER_GUIDE.docx](docs/USER_GUIDE.docx) | руководство пользователя: описание интерфейса со скриншотами, роли, загрузка, анализ, отчёт, экспорт, администрирование, частые вопросы; исходники и пересъёмка скриншотов — [docs/user-guide/](docs/user-guide/README.md) |
 | [docs/OPERATIONS.md](docs/OPERATIONS.md) | запуск, проверки, миграции и обновления, бэкап и восстановление, логи, ротация секретов, очистка данных, отключение облака, смена URL Ollama, аварийное восстановление, e2e-стенд, автоматические бэкапы |
 | [docs/SECURITY_AND_PRIVACY.md](docs/SECURITY_AND_PRIVACY.md) | какие данные хранятся и куда передаются, меры защиты, результаты аудита безопасности, остаточные риски |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | архитектура, модель данных, конвейер анализа |
@@ -136,4 +137,5 @@ bash e2e/run.sh all
 | [docs/ACCEPTANCE_CHECKLIST.md](docs/ACCEPTANCE_CHECKLIST.md) | чек-лист финальной приёмки с результатами |
 | [docs/IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md) | что сделано и как проверено по этапам |
 | [docs/LICENSES.md](docs/LICENSES.md) | лицензии зависимостей |
+| [samples/README.md](samples/README.md) | четыре синтетических тестовых договора (DOCX, PDF, DOC; договор 4 — юридические риски) и порядок ручной проверки |
 | `CLAUDE.md` | инструкции и контекст для продолжения разработки в Claude Code |

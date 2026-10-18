@@ -1,0 +1,12 @@
+{
+  "name": "contract-ai-analyzer-user-guide",
+  "private": true,
+  "description": "Сборка руководства пользователя docs/USER_GUIDE.docx и съёмка скриншотов интерфейса",
+  "scripts": {
+    "shots": "node shots.cjs",
+    "build": "node build.cjs"
+  },
+  "dependencies": {
+    "docx": "9.5.1"
+  }
+}
