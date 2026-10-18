@@ -38,6 +38,8 @@ PostgreSQL для разработки — из compose, опубликован�
 docker compose -f compose.yaml -f compose.dev.yaml up -d db     # 127.0.0.1:55432
 ```
 
+На Windows порт может оказаться в диапазоне, зарезервированном Hyper-V/WSL (`bind: An attempt was made to access a socket in a way forbidden by its access permissions`). Диапазоны: `netsh interface ipv4 show excludedportrange protocol=tcp`; задайте другой порт через `DEV_DB_PORT` (например, `DEV_DB_PORT=56432`) и используйте его в `DATABASE_URL`/`TEST_DATABASE_URL`. Так было на этапе 09: 55432 попал в зарезервированный диапазон 55333–55432.
+
 Backend (Python 3.12+):
 
 ```bash
