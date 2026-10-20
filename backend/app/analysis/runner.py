@@ -25,7 +25,7 @@ import re
 import uuid
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any, TypeVar
@@ -534,13 +534,7 @@ class AnalysisRunner:
             needed = estimate_tokens(sum(len(m.content) for m in messages)) + target.max_output_tokens + 1024
             limit = target.context_window or DEFAULT_CONTEXT_TOKENS
             num_ctx = min(limit, math.ceil(needed / 2048) * 2048)
-            params = GenerationParams(
-                temperature=params.temperature,
-                top_p=params.top_p,
-                seed=params.seed,
-                max_output_tokens=params.max_output_tokens,
-                num_ctx=num_ctx,
-            )
+            params = replace(params, num_ctx=num_ctx)
         return params
 
     async def _call(self, target: Target, req: StructuredRequest) -> StructuredResult:

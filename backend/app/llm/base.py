@@ -10,6 +10,10 @@ from typing import Any, Literal, Protocol
 from app.models.enums import StructuredOutputSupport
 
 Role = Literal["system", "user", "assistant"]
+# Режим рассуждений («thinking») модели: off — выключить; None — не передавать параметр
+# (рассуждения включены в режиме модели по умолчанию). Уровни усилия не используются: на OpenRouter
+# заданный уровень оказался медленнее режима по умолчанию (IMPLEMENTATION_STATUS, доработка 2026-10-20).
+ReasoningMode = Literal["off"]
 
 
 @dataclass(frozen=True)
@@ -29,6 +33,7 @@ class GenerationParams:
     max_output_tokens: int | None = None
     # Только Ollama: размер контекста (num_ctx). У OpenRouter контекст задаётся моделью.
     num_ctx: int | None = None
+    reasoning: ReasoningMode | None = None
 
     @classmethod
     def from_mapping(
@@ -40,6 +45,7 @@ class GenerationParams:
             seed=params.get("seed"),
             max_output_tokens=params.get("max_output_tokens", max_output_tokens),
             num_ctx=params.get("num_ctx"),
+            reasoning=params.get("reasoning"),
         )
 
 

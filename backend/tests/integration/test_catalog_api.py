@@ -343,6 +343,42 @@ async def test_model_test_confirms_structured_output_and_fills_metadata(api: Api
     assert chat[0]["response_format"]["type"] == "json_schema"
 
 
+async def test_reasoning_mode_is_saved_and_used_by_model_test(api: ApiEnv) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/models"):
+            return httpx.Response(200, json={"data": [{"id": "vendor/thinking", "context_length": 32000}]})
+        return chat_ok({"status": "ok"})
+
+    recorder = Recorder(handler)
+    use_network(api, recorder)
+    c = await _superadmin(api)
+    async with c:
+        provider = await _openrouter(c)
+        # Уровни усилия не поддерживаются: только "off" или без параметра.
+        for value in ("low", "on", True):
+            bad = await c.post(
+                "/api/admin/models",
+                json={
+                    "provider_config_id": provider["id"],
+                    "external_model_id": "vendor/x",
+                    "display_name": "X",
+                    "generation_params": {"reasoning": value},
+                },
+            )
+            assert bad.status_code == 422, value
+        model = await _model(c, provider, external_model_id="vendor/thinking")
+        r = await c.patch(
+            f"/api/admin/models/{model['id']}",
+            json={"version": model["version"], "generation_params": {"temperature": 0.2, "reasoning": "off"}},
+        )
+        assert r.status_code == 200, r.text
+        assert r.json()["generation_params"] == {"temperature": 0.2, "reasoning": "off"}
+        r = await c.post(f"/api/admin/models/{model['id']}/test", json={"generate": True})
+        assert r.status_code == 200, r.text
+    chat = [json.loads(r.content) for r in recorder.requests if r.url.path.endswith("/chat/completions")]
+    assert chat and all(body["reasoning"] == {"effort": "none"} for body in chat)
+
+
 async def test_model_test_unavailable_model(api: ApiEnv) -> None:
     use_network(api, Recorder(httpx.Response(404, json={"error": "model 'x' not found"})))
     c = await _superadmin(api)

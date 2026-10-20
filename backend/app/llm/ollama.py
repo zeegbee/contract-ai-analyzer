@@ -3,6 +3,7 @@
 Сверено с документацией Ollama (docs.ollama.com, 2026-10-16):
 - `POST /api/chat` — `model`, `messages`, `stream` (по умолчанию true — передаём false), `format`
   (`"json"` или JSON Schema), `options` (`temperature`, `top_p`, `seed`, `num_ctx`, `num_predict`);
+  `think: false` выключает рассуждения (без параметра — режим модели по умолчанию);
   ответ — `message.content`, `done_reason`, `prompt_eval_count`, `eval_count`;
 - ошибки — `{"error": "..."}`, 404 — модель не найдена (не скачана);
 - `GET /api/version` — `{"version": "..."}`; `GET /api/tags` — `models[]`;
@@ -71,6 +72,8 @@ class OllamaProvider:
             options["num_ctx"] = p.num_ctx
         if options:
             body["options"] = options
+        if p.reasoning == "off":
+            body["think"] = False
         return body
 
     async def generate_structured(self, req: StructuredRequest) -> StructuredResult:

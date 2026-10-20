@@ -13,6 +13,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, StringConstraints
 
+from app.llm.base import ReasoningMode
 from app.models.enums import ProviderType, StructuredOutputSupport, UserRole
 
 
@@ -139,6 +140,8 @@ class GenerationParamsIn(StrictModel):
     seed: int | None = Field(default=None, ge=0, le=2**31 - 1)
     # Только Ollama: размер контекста (num_ctx).
     num_ctx: int | None = Field(default=None, ge=512, le=2_097_152)
+    # "off" — рассуждения выключены (OpenRouter `reasoning`, Ollama `think`); не задан — режим модели.
+    reasoning: ReasoningMode | None = None
 
 
 class PricingIn(StrictModel):

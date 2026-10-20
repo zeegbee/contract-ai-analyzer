@@ -135,6 +135,32 @@ async def test_openrouter_json_mode() -> None:
     assert recorder.bodies()[0]["response_format"] == {"type": "json_object"}
 
 
+def _with_reasoning(mode: str | None) -> StructuredRequest:
+    req = _request()
+    params = GenerationParams.from_mapping({"reasoning": mode}, max_output_tokens=1000)
+    return StructuredRequest(
+        model=req.model,
+        messages=req.messages,
+        json_schema=req.json_schema,
+        schema_name=req.schema_name,
+        params=params,
+        structured_output=req.structured_output,
+    )
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected"),
+    [
+        (None, None),
+        ("off", {"effort": "none"}),
+    ],
+)
+async def test_openrouter_reasoning_mode(mode: str | None, expected: dict[str, object] | None) -> None:
+    recorder = Recorder(chat_ok({"risks": []}))
+    await _openrouter(recorder).generate_structured(_with_reasoning(mode))
+    assert recorder.bodies()[0].get("reasoning") == expected
+
+
 async def test_rate_limit_retries_with_retry_after() -> None:
     sleeps = Sleeps()
     recorder = Recorder(or_error(429, headers={"Retry-After": "2"}), chat_ok({"risks": []}))
@@ -328,6 +354,14 @@ async def test_ollama_chat_with_schema_and_usage() -> None:
     body = json.loads(request.content)
     assert body["format"] == SCHEMA and body["stream"] is False
     assert body["options"] == {"temperature": 0.1, "seed": 7, "num_predict": 1000}
+    assert "think" not in body
+
+
+async def test_ollama_reasoning_off() -> None:
+    ok = {"model": "qwen3:8b", "message": {"content": '{"risks": []}'}, "done": True, "done_reason": "stop"}
+    recorder = Recorder(httpx.Response(200, json=ok))
+    await _ollama(recorder).generate_structured(_with_reasoning("off"))
+    assert json.loads(recorder.requests[0].content)["think"] is False
 
 
 async def test_ollama_model_not_pulled() -> None:

@@ -1,4 +1,4 @@
-import { screen, waitFor } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { beforeEach, describe, expect, it } from 'vitest'
@@ -223,5 +223,14 @@ describe('навигация по ролям (только UX)', () => {
     const nav = await screen.findByRole('navigation')
     expect(nav).toHaveTextContent('Пользователи')
     expect(nav).toHaveTextContent('Журнал аудита')
+  })
+
+  it('в подвале — предупреждение и ссылка на состояние системы, без автора', async () => {
+    serveMe(makeMe('viewer'))
+    renderRoute('/')
+    const footer = await screen.findByRole('contentinfo')
+    expect(footer).toHaveTextContent('не заменяют консультацию юриста')
+    expect(footer).not.toHaveTextContent('Автор')
+    expect(within(footer).getByRole('link', { name: 'Состояние системы' })).toHaveAttribute('href', '/status')
   })
 })

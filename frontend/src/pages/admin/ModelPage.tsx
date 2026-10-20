@@ -41,6 +41,7 @@ interface Draft {
   top_p: string
   seed: string
   num_ctx: string
+  reasoning: 'on' | 'off'
   structured_output: StructuredOutput
   pricing_mode: PricingMode
   prompt_price: string
@@ -67,6 +68,7 @@ function draftFrom(m: Model): Draft {
     top_p: str(p.top_p),
     seed: str(p.seed),
     num_ctx: str(p.num_ctx),
+    reasoning: p.reasoning === 'off' ? 'off' : 'on',
     structured_output: m.structured_output,
     pricing_mode: 'keep',
     prompt_price: m.pricing?.prompt_per_mtok ?? '',
@@ -86,6 +88,7 @@ function toInput(d: Draft, m: Model): ModelInput & { version: number } {
   if (topP !== undefined) params.top_p = topP
   if (seed !== undefined) params.seed = seed
   if (numCtx !== undefined) params.num_ctx = numCtx
+  if (d.reasoning === 'off') params.reasoning = 'off'
   return {
     version: m.version,
     display_name: d.display_name.trim(),
@@ -155,6 +158,17 @@ function ModelForm({ model, onSaved }: { model: Model; onSaved: (m: Model) => vo
         {numberField('top_p', t.topP, { min: 0, max: 1, step: '0.01' })}
         {numberField('seed', t.seed, { min: 0 })}
         {model.provider_type === 'ollama' && numberField('num_ctx', t.numCtx, { min: 512 })}
+        <Field id="model-reasoning" label={t.reasoning} hint={t.reasoningHint}>
+          <select
+            id="model-reasoning"
+            className={inputClass}
+            value={d.reasoning}
+            onChange={(e) => set('reasoning', e.target.value as Draft['reasoning'])}
+          >
+            <option value="on">{t.reasoningOn}</option>
+            <option value="off">{t.reasoningOff}</option>
+          </select>
+        </Field>
         <Field id="model-structured" label={t.structured} hint={t.structuredHint}>
           <select
             id="model-structured"

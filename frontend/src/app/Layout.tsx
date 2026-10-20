@@ -88,9 +88,11 @@ export function Layout() {
       <footer className="border-t border-slate-200 bg-white">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-2 px-4 py-3 text-xs text-slate-600">
           <p>{ru.disclaimer}</p>
-          <NavLink to="/status" className="text-slate-700 underline hover:text-slate-950">
-            {ru.nav.status}
-          </NavLink>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+            <NavLink to="/status" className="text-slate-700 underline hover:text-slate-950">
+              {ru.nav.status}
+            </NavLink>
+          </div>
         </div>
       </footer>
     </div>

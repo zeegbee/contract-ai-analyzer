@@ -19,7 +19,8 @@ const EMAIL = process.env.CAI_EMAIL || 'root@example.org'
 const PASSWORD = process.env.CAI_PASSWORD
 const TEMP_ENABLE = process.env.CAI_TEMP_ENABLE_MODELS === '1'
 const OUT = path.join(__dirname, 'screenshots')
-const VIEWPORT = { width: 1360, height: 860 }
+// Окно уже контейнера приложения (max-w-6xl = 1152 px) и снимок в 2x: интерфейс на рисунке крупнее и чётче.
+const VIEWPORT = { width: 1024, height: 860 }
 
 if (!PASSWORD) {
   console.error('Задайте CAI_PASSWORD (пароль Superadmin)')
@@ -28,7 +29,7 @@ if (!PASSWORD) {
 
 ;(async () => {
   const browser = await chromium.launch()
-  const ctx = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 1.25, locale: 'ru-RU' })
+  const ctx = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, locale: 'ru-RU' })
   const page = await ctx.newPage()
   let restore = null
 
@@ -62,10 +63,23 @@ if (!PASSWORD) {
     await page.evaluate(() => window.scrollBy(0, -24))
   }
   const skip = (name, why) => console.warn(`пропущен ${name}: ${why}`)
+  // Снимок области элемента с полями вокруг — без пустого фона страницы.
+  const around = async (locator, pad = 32) => {
+    const box = await locator.boundingBox()
+    const x = Math.max(0, Math.floor(box.x - pad))
+    const y = Math.max(0, Math.floor(box.y - pad))
+    return {
+      x,
+      y,
+      width: Math.min(VIEWPORT.width - x, Math.ceil(box.width + 2 * pad)),
+      height: Math.ceil(box.height + 2 * pad),
+    }
+  }
 
   try {
     await page.goto(BASE + '/login')
-    await save('login')
+    await settle()
+    await save('login', { clip: await around(page.locator('section[aria-labelledby="login-title"]')) })
     await page.getByLabel('E-mail').fill(EMAIL)
     await page.getByLabel('Пароль').fill(PASSWORD)
     await page.getByRole('button', { name: 'Войти' }).click()
@@ -172,7 +186,11 @@ if (!PASSWORD) {
     await open('settings', '/admin/settings')
     await open('audit', '/admin/audit')
     await open('status', '/status')
-    await open('change-password', '/change-password')
+    // Смена пароля: шапка и форма, без пустого места под кнопкой.
+    await page.goto(BASE + '/change-password')
+    await settle()
+    const submit = await page.getByRole('button', { name: 'Сменить пароль' }).boundingBox()
+    await save('change-password', { clip: { x: 0, y: 0, width: VIEWPORT.width, height: Math.round(submit.y + submit.height + 32) } })
   } finally {
     if (restore) await restore()
     await browser.close()

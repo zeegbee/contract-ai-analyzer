@@ -596,3 +596,46 @@ Backend-тесты: `tests/unit/test_backup_cron.py` (24: ежедневное, 
 
 ### Изменённые файлы
 `README.md` (переписан), `docs/ACCEPTANCE_CHECKLIST.md` (новый, с результатами), `docs/IMPLEMENTATION_STATUS.md` (этот раздел), `docs/ARCHITECTURE.md` (строка статуса), `docs/OPERATIONS.md` (§2 — зарезервированные порты Windows), `CLAUDE.md` (текущее состояние). Код приложения не менялся.
+
+## Доработка 2026-10-20 — режим рассуждений модели
+
+Не входит в этапы промптов; выполнено по запросу владельца после сравнения моделей (`docs/MODEL_COMPARISON_2026-10-20.pdf`): Qwen3.6-35B-A3B в режиме рассуждений по умолчанию тратила 4–12 минут на договор.
+
+### Что сделано
+- В параметры генерации модели добавлено поле `reasoning` (`off|minimal|low|medium|high`; не задано — по умолчанию модели): `app/llm/base.py` (`ReasoningMode`, `GenerationParams.reasoning`), `app/schemas/catalog.py` (валидация), `app/llm/openrouter.py` (`reasoning.effort`, для уровней — `exclude: true`), `app/llm/ollama.py` (`think`), `app/analysis/runner.py` (параметр не теряется при подстановке `num_ctx` для Ollama), `app/services/catalog.py` (проверка модели с генерацией использует тот же режим). Миграция не нужна — `generation_params` хранится в JSONB.
+- UI: «Режим рассуждений» в карточке модели (`frontend/src/pages/admin/ModelPage.tsx`, `src/api/catalog.ts`, `src/i18n/ru.ts`) с подсказкой.
+- Тесты: `tests/unit/test_llm_providers.py` (тело запроса OpenRouter для `None/off/low/high`, Ollama `think` для `off/medium`), `tests/integration/test_catalog_api.py::test_reasoning_mode_is_saved_and_used_by_model_test` (422 на неизвестное значение, сохранение, режим в запросе проверки), `frontend/src/pages/admin/llm.test.tsx` (выбор и сохранение режима).
+
+### Проверки (реально запущены)
+- `ruff check app tests`, `ruff format --check app tests` — без замечаний; `mypy app tests` — `Success: no issues found in 148 source files`.
+- `pytest -q` (тестовая БД на 127.0.0.1:56432): 577 passed, 1 failed — новый интеграционный тест (заглушка сети не отвечала на `GET /models`, проверка модели останавливалась до генерации); после исправления теста `tests/integration/test_catalog_api.py` — 32 passed. Итого 578 тестов зелёные.
+- Frontend: `npm run typecheck` — без ошибок; `npx oxlint --deny-warnings src` — exit 0; `npx vitest run` — 9 файлов, 92 passed; `npm run build` — успешно.
+- `docker compose up -d --build backend worker frontend` — все сервисы healthy, `/api/health/ready` — `ready`.
+
+### Live-проверка (OpenRouter, `qwen/qwen3.6-35b-a3b`, 4 договора `samples/`, сторона B, все категории, «Стандартный»)
+Проверка модели с генерацией в режимах `off` и `low` — пройдена (JSON Schema подтверждена).
+
+| Режим | Договор 1 / 2 / 3 / 4 | Стоимость, USD | Найдено заложенных рисков |
+|---|---|---|---|
+| по умолчанию (прогон до доработки) | 241 / 346 / 326 / 732 с | 0,037 / 0,033 / 0,027 / 0,055 | 40 из 43 |
+| `off` | 121 / 121 / 76 / 133 с | 0,012 / 0,009 / 0,007 / 0,012 | 34 полностью + 5 частично из 43 |
+| `low` (только договоры 1–2, прогон остановлен) | 402 / 663 с | 0,048 / 0,042 | 9 из 9; 8 + 1 частично из 9 |
+
+- `off` — в 2–5,5 раз быстрее и в 3–4,5 раза дешевле; полнота ниже (пропуски: преамбула, п. 10.2 и 11.2 дог. 4, п. 5.1 дог. 3), больше сомнительных «противоречий» и одно ложное срабатывание низкой серьёзности (п. 9.2 дог. 1); сервер отклонил 2 цитаты (`not_found`), верификатор пометил 3 цитаты как не подтверждающие риск.
+- `low` — медленнее и дороже режима по умолчанию: OpenRouter задаёт бюджет рассуждений долей лимита вывода (20 % для `low`), и модель расходует его полностью (40–48 тыс. выходных токенов на договор). Прогон остановлен после двух договоров; один анализ отменён.
+- Полнота оценена вручную по таблицам `samples/README.md`, по одному запуску.
+
+### Упрощение до двух вариантов (решение владельца, 2026-10-20)
+После прогона по просьбе владельца в карточке модели оставлены два варианта: «включён» (параметр не передаётся — режим модели по умолчанию) и «выключен» (`reasoning: "off"`). Уровни `minimal|low|medium|high` удалены из backend (`ReasoningMode = Literal["off"]`, другие значения → 422), OpenRouter-адаптера (`effort` + `exclude`) и Ollama-адаптера (`think: "<уровень>"`). Явное включение через `reasoning.enabled` не используется: оно задаёт уровень medium, а заданный уровень оказался медленнее режима по умолчанию. Сохранённое в локальной БД у Qwen значение `off` осталось корректным.
+
+Проверки после упрощения (реально запущены): `ruff check`, `ruff format --check` — без замечаний; `mypy app tests` — `Success: no issues found in 148 source files`; `pytest -q` (БД на 127.0.0.1:56432) — **575 passed** (на 3 меньше: удалены параметризованные случаи уровней `low/high` для OpenRouter и `medium` для Ollama; интеграционный тест теперь проверяет 422 для `low`, `on`, `true`); frontend — `npm run typecheck` без ошибок, `oxlint` exit 0, `vitest run` — 9 файлов, **93 passed** (тест режима параметризован: «включён → выключен» и «выключен → включён», в списке ровно два варианта), `npm run build` — успешно; `docker compose up -d --build backend worker frontend` — healthy.
+
+### Исправление вёрстки «Настройки» (2026-10-20)
+В карточках системных параметров («Документы», «Анализ», «Экспорт») значение переносилось на отдельную строку, если название вместе с именем переменной окружения не помещалось (`flex-wrap`). Теперь строка не переносится: значение справа (`shrink-0`, `whitespace-nowrap`), имя переменной — отдельной строкой под названием (`frontend/src/pages/admin/SettingsPage.tsx`). Проверено скриншотами страницы на ширине 1440, 1024, 768 и 390 px; `typecheck`, `oxlint`, `vitest` (93 passed), `build` — успешно. Скриншот `docs/user-guide/screenshots/settings.png` в руководстве пользователя снят до исправления.
+
+### Ограничения
+- Поддержка `reasoning`/`think` зависит от модели и маршрута у провайдера: модель, у которой рассуждения обязательны, может отклонить `off` — это покажет проверка модели с генерацией.
+- «Включён» означает режим модели по умолчанию: у модели, которая по умолчанию не рассуждает, этот вариант рассуждения не включит.
+
+### Изменённые файлы
+`backend/app/llm/{base,openrouter,ollama}.py`, `backend/app/schemas/catalog.py`, `backend/app/services/catalog.py`, `backend/app/analysis/runner.py`, `backend/tests/unit/test_llm_providers.py`, `backend/tests/integration/test_catalog_api.py`, `frontend/src/api/catalog.ts`, `frontend/src/pages/admin/ModelPage.tsx`, `frontend/src/pages/admin/llm.test.tsx`, `frontend/src/i18n/ru.ts`, `docs/ARCHITECTURE.md` (§12.1), `docs/IMPLEMENTATION_STATUS.md` (этот раздел), `CLAUDE.md`.

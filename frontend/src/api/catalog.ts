@@ -228,7 +228,14 @@ export interface ModelInput {
   allowed_roles?: string[]
   context_window?: number | null
   max_output_tokens?: number | null
-  generation_params?: { temperature?: number; top_p?: number; seed?: number; num_ctx?: number }
+  generation_params?: {
+    temperature?: number
+    top_p?: number
+    seed?: number
+    num_ctx?: number
+    // 'off' — рассуждения выключены; не задан — включены в режиме модели по умолчанию.
+    reasoning?: 'off'
+  }
   structured_output?: Exclude<StructuredOutput, 'json_schema'>
   pricing?: { prompt_per_mtok: string; completion_per_mtok: string; currency: string } | null
   notes?: string | null

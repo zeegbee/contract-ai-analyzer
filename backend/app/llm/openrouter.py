@@ -6,6 +6,7 @@
   `provider.require_parameters=true`, чтобы маршрутизировать только на эндпоинты с поддержкой схем;
 - ошибки — `{"error": {"code", "message", "metadata"}}`; после начала генерации ошибка может прийти
   в теле ответа с HTTP 200 (`error` и/или `finish_reason: "error"`);
+- `reasoning: {"effort": "none"}` выключает рассуждения; без параметра — режим модели по умолчанию;
 - `usage` (`prompt_tokens`, `completion_tokens`, `total_tokens`, `cost`) — cost берётся только если есть;
 - `GET {base}/models` — `data[]` с `context_length`, `top_provider.max_completion_tokens`,
   `pricing.prompt/completion` (строки, USD за токен), `supported_parameters`;
@@ -143,6 +144,8 @@ class OpenRouterProvider:
             # `max_tokens` помечен в документации устаревшим в пользу `max_completion_tokens`, но именно
             # он перечислен в `supported_parameters` моделей, по которым работает require_parameters.
             body["max_tokens"] = p.max_output_tokens
+        if p.reasoning == "off":
+            body["reasoning"] = {"effort": "none"}
         return body
 
     async def generate_structured(self, req: StructuredRequest) -> StructuredResult:

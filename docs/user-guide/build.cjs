@@ -11,7 +11,11 @@ const {
 const SHOTS = process.argv[2] || path.join(__dirname, 'screenshots')
 const OUT = process.argv[3] || path.join(__dirname, '..', 'USER_GUIDE.docx')
 const FONT = 'Arial'
-const TEXT_WIDTH = 9638 // A4, поля 2 см
+const TEXT_WIDTH = 10206 // A4, поля слева и справа 1,5 см
+const MARGIN_X = 850
+const SHOT_SCALE = 2 // deviceScaleFactor в shots.cjs
+const IMAGE_WIDTH = 680 // px при 96 dpi = TEXT_WIDTH
+const IMAGE_MAX_HEIGHT = 820 // чтобы рисунок с подписью помещался на страницу
 const ACCENT = '1D4ED8'
 let figure = 0
 let stepsInstance = 0
@@ -50,9 +54,9 @@ function pngSize(file) {
   const b = fs.readFileSync(file)
   return { w: b.readUInt32BE(16), h: b.readUInt32BE(20), data: b }
 }
-function image(name, caption, maxWidth = 620) {
+function image(name, caption, maxWidth = IMAGE_WIDTH) {
   const { w, h, data } = pngSize(path.join(SHOTS, `${name}.png`))
-  const width = Math.min(maxWidth, Math.round(w / 1.25))
+  const width = Math.min(maxWidth, Math.round(w / SHOT_SCALE), Math.round((IMAGE_MAX_HEIGHT * w) / h))
   figure += 1
   return [
     new Paragraph({
@@ -64,7 +68,7 @@ function image(name, caption, maxWidth = 620) {
     new Paragraph({
       alignment: AlignmentType.CENTER,
       spacing: { after: 200 },
-      children: [new TextRun({ text: `Рисунок ${figure}. ${caption}`, italics: true, size: 18, color: '475569' })],
+      children: [new TextRun({ text: `Рисунок ${figure}. ${caption}`, italics: true, size: 20, color: '475569' })],
     }),
   ]
 }
@@ -80,7 +84,7 @@ function table(headers, rows, widths) {
       width: { size: scaled[i], type: WidthType.DXA },
       shading: head ? { type: ShadingType.CLEAR, fill: 'E2E8F0', color: 'auto' } : undefined,
       margins: { top: 60, bottom: 60, left: 100, right: 100 },
-      children: [new Paragraph({ children: runs(text, { size: 19, bold: head || undefined }) })],
+      children: [new Paragraph({ children: runs(text, { size: 22, bold: head || undefined }) })],
     })
   return new Table({
     width: { size: TEXT_WIDTH, type: WidthType.DXA },
@@ -99,7 +103,7 @@ const content = [
   new Paragraph({ spacing: { before: 3000, after: 200 }, children: [new TextRun({ text: 'Contract AI Analyzer', bold: true, size: 56, color: ACCENT })] }),
   new Paragraph({ spacing: { after: 600 }, children: [new TextRun({ text: 'Руководство пользователя', size: 40 })] }),
   p('Описание интерфейса веб-приложения для предварительного анализа договоров: загрузка документов, запуск анализа, работа с отчётом и экспортом, администрирование.'),
-  p('Версия приложения: 0.1.0. Редакция руководства: 18.10.2026.'),
+  p('Версия приложения: 0.1.0. Редакция руководства: 19.10.2026.'),
   note('Результаты анализа — предварительная поддержка работы с договором и **не заменяют консультацию юриста**. Любой вывод системы, включая риски со статусом «Подтверждён», перед использованием проверяет специалист.', 'warn'),
   new Paragraph({ children: [new PageBreak()] }),
 
@@ -457,7 +461,7 @@ const content = [
     ['Поле', 'Описание'],
     [
       ['Название, Тип', 'произвольное название; тип — OpenRouter или Ollama'],
-      ['Адрес API', 'OpenRouter — https://openrouter.ai/api/v1; Ollama — адрес сервера, например http://ollama:11434 или http://10.0.0.5:11434'],
+      ['Адрес API', 'OpenRouter — https://openrouter.ai/api/v1; Ollama — адрес сервера, например http://ollama:11434 или http://192.168.1.5:11434'],
       ['API-ключ', 'хранится зашифрованным и больше не показывается (видны только последние символы). При смене адреса без нового ключа сохранённый ключ сбрасывается'],
       ['Разрешить частную сеть', 'нужно для Ollama во внутренней сети (адреса 10.x, 172.16–31.x, 192.168.x)'],
       ['Передача данных за пределы организации', 'отмечает провайдера как облачный: на него распространяются выключатель облака и предупреждение'],
@@ -530,14 +534,16 @@ const doc = new Document({
   creator: 'Contract AI Analyzer',
   title: 'Contract AI Analyzer — Руководство пользователя',
   styles: {
-    default: { document: { run: { font: FONT, size: 21 } } },
+    default: { document: { run: { font: FONT, size: 24 } } },
     paragraphStyles: [
       { id: 'Heading1', name: 'Heading 1', basedOn: 'Normal', next: 'Normal', quickFormat: true,
-        run: { size: 34, bold: true, font: FONT, color: ACCENT }, paragraph: { spacing: { before: 240, after: 200 }, outlineLevel: 0 } },
+        run: { size: 40, bold: true, font: FONT, color: ACCENT }, paragraph: { spacing: { before: 240, after: 200 }, outlineLevel: 0 } },
       { id: 'Heading2', name: 'Heading 2', basedOn: 'Normal', next: 'Normal', quickFormat: true,
-        run: { size: 27, bold: true, font: FONT, color: '0F172A' }, paragraph: { spacing: { before: 280, after: 140 }, outlineLevel: 1, keepNext: true } },
+        run: { size: 32, bold: true, font: FONT, color: '0F172A' }, paragraph: { spacing: { before: 280, after: 140 }, outlineLevel: 1, keepNext: true } },
       { id: 'Heading3', name: 'Heading 3', basedOn: 'Normal', next: 'Normal', quickFormat: true,
-        run: { size: 23, bold: true, font: FONT, color: '334155' }, paragraph: { spacing: { before: 200, after: 100 }, outlineLevel: 2, keepNext: true } },
+        run: { size: 27, bold: true, font: FONT, color: '334155' }, paragraph: { spacing: { before: 200, after: 100 }, outlineLevel: 2, keepNext: true } },
+      // Стиль абзаца, а не только TextRun: иначе поля номера страницы рендерятся шрифтом по умолчанию.
+      { id: 'PageMargin', name: 'Page Margin', basedOn: 'Normal', run: { size: 18, font: FONT, color: '64748B' } },
     ],
   },
   numbering: {
@@ -550,14 +556,15 @@ const doc = new Document({
   },
   sections: [
     {
-      properties: { page: { size: { width: 11906, height: 16838 }, margin: { top: 1134, bottom: 1134, left: 1134, right: 1134 } } },
+      properties: { page: { size: { width: 11906, height: 16838 }, margin: { top: 1134, bottom: 1134, left: MARGIN_X, right: MARGIN_X } } },
       headers: {
         default: new Header({ children: [new Paragraph({ alignment: AlignmentType.RIGHT,
-          children: [new TextRun({ text: 'Contract AI Analyzer — Руководство пользователя', size: 16, color: '64748B' })] })] }),
+          children: [new TextRun({ text: 'Contract AI Analyzer — Руководство пользователя', size: 18, color: '64748B' })] })] }),
       },
       footers: {
-        default: new Footer({ children: [new Paragraph({ alignment: AlignmentType.CENTER,
-          children: [new TextRun({ children: ['Стр. ', PageNumber.CURRENT, ' из ', PageNumber.TOTAL_PAGES], size: 16, color: '64748B' })] })] }),
+        // Номер страницы справа.
+        default: new Footer({ children: [new Paragraph({ style: 'PageMargin', alignment: AlignmentType.RIGHT,
+          children: [new TextRun({ children: ['Стр. ', PageNumber.CURRENT, ' из ', PageNumber.TOTAL_PAGES], size: 18, color: '64748B' })] })] }),
       },
       children: content,
     },

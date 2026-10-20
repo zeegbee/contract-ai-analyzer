@@ -53,11 +53,15 @@ export function SettingsPage() {
               <h2 className="mb-2 font-semibold">{t.groups[group] ?? group}</h2>
               <dl className="space-y-1 text-sm">
                 {params.map((p) => (
-                  <div key={p.key} className="flex flex-wrap justify-between gap-2">
-                    <dt className="text-slate-700">
-                      {t.params[p.key] ?? p.key} <code className="text-xs text-slate-500">{p.env}</code>
+                  <div key={p.key} className="flex items-baseline justify-between gap-4">
+                    {/* Длинное название переносится внутри колонки, значение остаётся справа в той же строке. */}
+                    <dt className="min-w-0 text-slate-700">
+                      {t.params[p.key] ?? p.key}
+                      <code className="block text-xs break-words text-slate-500">{p.env}</code>
                     </dt>
-                    <dd className="font-medium">{typeof p.value === 'number' ? number.format(p.value) : String(p.value)}</dd>
+                    <dd className="shrink-0 text-right font-medium whitespace-nowrap tabular-nums">
+                      {typeof p.value === 'number' ? number.format(p.value) : String(p.value)}
+                    </dd>
                   </div>
                 ))}
               </dl>

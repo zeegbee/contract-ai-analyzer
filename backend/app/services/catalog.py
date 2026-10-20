@@ -1031,7 +1031,9 @@ async def _probe_generation(
     llm: Any, model: ModelConfig, steps: list[TestStep]
 ) -> StructuredOutputSupport | None:
     limit = min(model.max_output_tokens or PROBE_MAX_OUTPUT_TOKENS, PROBE_MAX_OUTPUT_TOKENS)
-    params = GenerationParams(temperature=0, max_output_tokens=limit)
+    # Режим рассуждений — как в анализе: проверка покажет, принимает ли его модель.
+    reasoning = GenerationParams.from_mapping(dict(model.generation_params or {})).reasoning
+    params = GenerationParams(temperature=0, max_output_tokens=limit, reasoning=reasoning)
     last_error: ProviderError | None = None
     for mode in (
         StructuredOutputSupport.json_schema,

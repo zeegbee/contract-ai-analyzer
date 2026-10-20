@@ -238,6 +238,33 @@ describe('страница модели', () => {
     expect(body).not.toHaveProperty('structured_output')
     expect(body).not.toHaveProperty('pricing')
   })
+
+  it.each([
+    { saved: {}, shown: 'on', choose: 'выключен', sent: { temperature: 0.2, reasoning: 'off' } },
+    { saved: { reasoning: 'off' }, shown: 'off', choose: 'включён', sent: { temperature: 0.2 } },
+  ])('режим рассуждений: $shown → $choose', async ({ saved, shown, choose, sent }) => {
+    serveMe(makeMe('admin'))
+    let body: Record<string, unknown> | null = null
+    server.use(
+      http.get('*/api/admin/models/m-1', () =>
+        HttpResponse.json(makeModel({ generation_params: { temperature: 0.2, ...saved } })),
+      ),
+      http.get('*/api/admin/config-revisions', () => HttpResponse.json({ items: [] })),
+      http.patch('*/api/admin/models/m-1', async ({ request }) => {
+        body = (await request.json()) as Record<string, unknown>
+        return HttpResponse.json(makeModel({ version: 2 }))
+      }),
+    )
+    renderRoute('/admin/models/m-1')
+    const user = userEvent.setup()
+    const select = await screen.findByLabelText('Режим рассуждений')
+    expect(select).toHaveValue(shown)
+    expect(screen.getAllByRole('option', { name: /^(включён|выключен)$/ })).toHaveLength(2)
+    await user.selectOptions(select, choose)
+    await user.click(screen.getByRole('button', { name: 'Сохранить' }))
+    await waitFor(() => expect(body).not.toBeNull())
+    expect((body as unknown as { generation_params: unknown }).generation_params).toEqual(sent)
+  })
 })
 
 function available(items: AvailableModel[], cloudEnabled = true) {
