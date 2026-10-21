@@ -40,6 +40,8 @@ class AnalysisCreateIn(BaseModel):
     verifier_model_id: uuid.UUID | None = None
     # Подтверждение передачи текста внешнему провайдеру — обязательно для облачной модели.
     cloud_consent: bool = False
+    # Подтверждённый предпросмотр маскировки — обязателен для облачной модели (этап 10).
+    redaction_preview_id: uuid.UUID | None = None
 
     @model_validator(mode="after")
     def _check(self) -> AnalysisCreateIn:
@@ -107,6 +109,16 @@ class AnalysisSummaryOut(BaseModel):
     can_retry: bool
 
 
+class RedactionSummaryOut(BaseModel):
+    """Маскировка анализа: режим и счётчики по категориям (без значений)."""
+
+    mode: str  # masked | unmasked_by_user
+    values: int
+    occurrences: int
+    categories: dict[str, int]
+    unmasked_confirmed_at: datetime | None = None
+
+
 class AnalysisDetailOut(AnalysisSummaryOut):
     config_snapshot: dict[str, Any]
     cloud_consent_at: datetime | None
@@ -114,6 +126,8 @@ class AnalysisDetailOut(AnalysisSummaryOut):
     coverage: dict[str, Any] | None
     usage: dict[str, Any] | None
     estimate: EstimateOut | None = None
+    # null — маскировка не применялась (локальная модель или анализ до этапа 10).
+    redaction: RedactionSummaryOut | None = None
 
 
 class AnalysisListOut(BaseModel):

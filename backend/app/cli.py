@@ -26,6 +26,7 @@ from app.security.rate_limit import LoginRateLimiter
 from app.security.secretbox import SecretBox
 from app.security.sessions import SessionManager
 from app.services import backup as backup_service
+from app.services import redaction as redaction_service
 from app.services.bootstrap import (
     FAILED_OUTCOMES,
     BootstrapOutcome,
@@ -58,19 +59,24 @@ async def _bootstrap(settings: Settings) -> int:
 
 
 async def _rotate_secrets(settings: Settings) -> int:
-    """Перешифровать ключи провайдеров первым ключом SECRETS_ENCRYPTION_KEYS (после добавления нового)."""
+    """Перешифровать первым ключом SECRETS_ENCRYPTION_KEYS (после добавления нового) ключи провайдеров,
+    найденные данные предпросмотров маскировки и таблицы соответствий анализов."""
     box = SecretBox(settings.secrets_encryption_keys)
     if not box.configured:
         print("SECRETS_ENCRYPTION_KEYS не задан", file=sys.stderr)
         return 2
     engine = create_engine(settings)
     try:
-        async with create_session_factory(engine)() as db:
+        factory = create_session_factory(engine)
+        async with factory() as db:
             rotated, failed = await rotate_provider_secrets(db, box)
+        async with factory() as db:
+            masked_rotated, masked_failed = await redaction_service.rotate_secrets(db, box)
     finally:
         await engine.dispose()
     print(f"Перешифровано ключей: {rotated}; не расшифровались: {failed}")
-    return 1 if failed else 0
+    print(f"Данные маскировки: перешифровано {masked_rotated}; не расшифровались: {masked_failed}")
+    return 1 if failed or masked_failed else 0
 
 
 async def _reset_superadmin_password(settings: Settings, email: str) -> int:

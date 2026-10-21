@@ -4,7 +4,7 @@
 чанкером и нормализатором получен результат. При изменении поведения компонента версия повышается.
 """
 
-PIPELINE_VERSION = "pipeline-1"
+PIPELINE_VERSION = "pipeline-2"  # этап 10: маскировка перед облачным анализом
 SCHEMA_VERSION = "schema-1"
 CHUNKER_VERSION = "chunker-1"
 NORMALIZER_VERSION = "normalizer-1"

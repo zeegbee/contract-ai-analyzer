@@ -169,6 +169,17 @@ export const analysisDetailSchema = analysisSummarySchema.extend({
   coverage: coverageSchema.nullable(),
   usage: record.nullable(),
   estimate: estimateSchema.nullable(),
+  // Маскировка (этап 10): null — не применялась (локальная модель или анализ до этапа 10).
+  redaction: z
+    .object({
+      mode: z.string(),
+      values: z.number(),
+      occurrences: z.number(),
+      categories: z.record(z.string(), z.number()),
+      unmasked_confirmed_at: z.string().nullable(),
+    })
+    .nullable()
+    .optional(),
 })
 export type AnalysisDetail = z.infer<typeof analysisDetailSchema>
 
@@ -258,6 +269,7 @@ export interface AnalysisRequest {
   depth: Depth
   model_id: string
   cloud_consent: boolean
+  redaction_preview_id?: string | null
 }
 
 const id = (value: string) => encodeURIComponent(value)

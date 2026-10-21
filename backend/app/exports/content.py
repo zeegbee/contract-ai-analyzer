@@ -18,6 +18,7 @@ from app.analysis.prompts import CATEGORY_LABELS
 from app.models.analyses import Analysis, AnalysisRisk, RiskEvidence
 from app.models.documents import Document, DocumentFragment, DocumentVersion
 from app.models.enums import AnalysisParty, RiskCategory, ValidationStatus
+from app.redaction.categories import redaction_line
 
 SEVERITY = {
     "critical": "Критический",
@@ -167,6 +168,13 @@ def _model_lines(snapshot: dict[str, Any]) -> list[tuple[str, str]]:
         vm = verifier.get("model") or {}
         lines.append(
             ("Верификатор цитат", f"{vm.get('display_name', '—')} ({vm.get('external_model_id', '—')})")
+        )
+    redaction = redaction_line(snapshot.get("redaction"))
+    if redaction:
+        lines.append(("Маскировка данных", redaction))
+    elif "redaction" in snapshot and not provider.get("is_cloud"):
+        lines.append(
+            ("Маскировка данных", "не применялась: локальная модель, текст не покидает инфраструктуру")
         )
     lines.append(("Версия модели в каталоге", str(model.get("version", "—"))))
     prompts = pipeline.get("prompts") or {}

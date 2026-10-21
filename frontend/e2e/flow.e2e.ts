@@ -135,6 +135,28 @@ test('полный сценарий: от bootstrap до экспорта', asyn
   expect(version.page_count).toBe(2)
   expect(version.sha256).toBe(sha256(readFileSync(env.fixture('contract-e2e.pdf'))))
 
+  // --- маскировка (этап 10): поиск данных в собранном образе — модели NER в образе, дочерний процесс
+  // под RLIMIT_AS. Сам облачный анализ на стенде не проверяется: mock-LLM в частной сети не может быть
+  // облачным провайдером (netguard), он покрыт integration-тестами.
+  const previewResponse = await apiCall(
+    page,
+    'POST',
+    `/api/documents/${documentId}/versions/${version.id}/redaction-previews`,
+  )
+  expect(previewResponse.status(), await previewResponse.text()).toBe(201)
+  const previewId = ((await previewResponse.json()) as { id: string }).id
+  await expect
+    .poll(async () => (await apiGet<{ status: string }>(page, `/api/redaction-previews/${previewId}`)).status, {
+      timeout: 120_000,
+    })
+    .toBe('ready')
+  const preview = await apiGet<{ ner_available: boolean; entities: { canonical: string; category: string }[] }>(
+    page,
+    `/api/redaction-previews/${previewId}`,
+  )
+  expect(preview.ner_available).toBe(true)
+  expect(preview.entities.map((e) => e.canonical)).toEqual(expect.arrayContaining(['Альфа Трейд', 'Бета Ритейл']))
+
   // --- новый анализ через UI
   await page.getByRole('link', { name: 'Запустить анализ' }).click()
   await expect(page.getByRole('heading', { name: 'Новый анализ' })).toBeVisible()
@@ -210,6 +232,13 @@ test('полный сценарий: от bootstrap до экспорта', asyn
   }
   expect(auditText).not.toContain('вправе изменить цену')
   expect(auditText).not.toContain('contract-e2e.pdf')
+  expect(auditText).not.toContain('Альфа Трейд')
+
+  // --- настройки маскировки (Superadmin) доступны и проходят аудит доступности
+  await page.goto('/admin/settings')
+  await expect(page.getByRole('heading', { name: 'Маскировка данных' })).toBeVisible()
+  await expect(page.getByLabel('Разрешить пользователям отправлять текст в облако без маскировки')).not.toBeChecked()
+  await expectAccessible(page, 'настройки')
 
   saveState({
     documentId,

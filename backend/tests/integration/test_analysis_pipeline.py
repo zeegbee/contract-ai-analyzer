@@ -23,6 +23,7 @@ from tests.analysis_helpers import (
     FakeLLM,
     accept_notice,
     by_fragment,
+    confirmed_preview,
     enable_cloud,
     factory_for,
     get_analysis,
@@ -431,7 +432,8 @@ async def test_cloud_disabled_during_analysis_stops_it(api: ApiEnv) -> None:
             await enable_cloud(api, False)  # аварийное отключение облака администратором
 
     fake = FakeLLM(hook=hook)
-    created = await start(client, doc, model, cloud_consent=True)
+    preview_id = await confirmed_preview(api, client, doc)
+    created = await start(client, doc, model, cloud_consent=True, redaction_preview_id=preview_id)
     assert created["cloud_transfer"] is True and created["cloud_consent_at"]
     await run_jobs(api, fake)
     analysis = await get_analysis(client, created["id"])

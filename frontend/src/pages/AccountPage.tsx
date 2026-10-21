@@ -1,16 +1,56 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
 import { Link } from 'react-router'
 
 import { fetchMySessions, revokeMySession, revokeOtherSessions } from '../api/auth'
+import { AVAILABLE_MODELS_KEY, fetchAvailableModels } from '../api/catalog'
 import { useCurrentUser } from '../app/session'
 import { ErrorNotice } from '../components/ErrorNotice'
-import { type ModelChoice, ModelSelect } from '../components/ModelSelect'
 import { Button, Notice, PageTitle } from '../components/ui'
 import { ru } from '../i18n/ru'
 import { formatDateTime } from '../lib/format'
+import { pricingText } from '../lib/pricing'
 
 const SESSIONS_KEY = ['auth', 'sessions'] as const
+
+/** Справочный список моделей, доступных пользователю (выбор модели и согласие — в «Новом анализе»). */
+function AvailableModels() {
+  const t = ru.llm.available
+  const query = useQuery({ queryKey: AVAILABLE_MODELS_KEY, queryFn: ({ signal }) => fetchAvailableModels(signal) })
+  if (query.isPending) return <p>{ru.common.loading}</p>
+  if (query.isError) return <ErrorNotice error={query.error} onRetry={() => void query.refetch()} />
+  const { items, cloud_models_enabled: cloudEnabled } = query.data
+  return (
+    <div className="space-y-2">
+      {!cloudEnabled && <p className="text-xs text-slate-600">{t.cloudOff}</p>}
+      {items.length === 0 ? (
+        <p className="text-sm text-slate-600">{t.empty}</p>
+      ) : (
+        <ul className="divide-y divide-slate-200 rounded-lg border border-slate-200 bg-white text-sm">
+          {items.map((m) => (
+            <li key={m.id} className="space-y-0.5 p-3">
+              <p className="font-medium">
+                {m.display_name}
+                <span
+                  className={`ml-2 rounded px-1.5 text-xs ${m.is_cloud ? 'bg-amber-100 text-amber-900' : 'bg-green-100 text-green-900'}`}
+                >
+                  {m.is_cloud ? t.cloudBadge : t.localBadge}
+                </span>
+                {m.is_default && (
+                  <span className="ml-2 rounded bg-slate-100 px-1.5 text-xs text-slate-800">{ru.llm.models.default}</span>
+                )}
+              </p>
+              <p className="text-slate-600">
+                {m.provider_name} · {ru.llm.models.contextWindow}: {m.context_window ?? ru.common.unknown} ·{' '}
+                {ru.llm.models.pricing}: {pricingText(m.pricing)}
+              </p>
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="text-xs text-slate-600">{t.hint}</p>
+    </div>
+  )
+}
 
 export function AccountPage() {
   const me = useCurrentUser()
@@ -20,7 +60,6 @@ export function AccountPage() {
   const revokeOne = useMutation({ mutationFn: revokeMySession, onSuccess: refresh })
   const revokeOthers = useMutation({ mutationFn: revokeOtherSessions, onSuccess: refresh })
   const others = sessions.data?.filter((s) => !s.current).length ?? 0
-  const [model, setModel] = useState<ModelChoice | null>(null)
 
   return (
     <section aria-labelledby="account-title" className="space-y-6">
@@ -42,7 +81,7 @@ export function AccountPage() {
           <h2 id="available-models-title" className="text-lg font-semibold">
             {ru.llm.available.title}
           </h2>
-          <ModelSelect value={model} onChange={setModel} />
+          <AvailableModels />
         </section>
       )}
 

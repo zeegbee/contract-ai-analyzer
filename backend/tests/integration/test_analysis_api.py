@@ -10,6 +10,7 @@ from tests.analysis_helpers import (
     FakeLLM,
     accept_notice,
     analysis_body,
+    confirmed_preview,
     enable_cloud,
     make_document,
     make_model,
@@ -154,9 +155,16 @@ async def test_cloud_model_requires_switch_notice_and_consent(api: ApiEnv) -> No
     r = await client.post("/api/analyses", json={**body, "cloud_consent": True})
     assert r.status_code == 409 and r.json()["error"]["code"] == "cloud_notice_not_accepted"
     await accept_notice(api, owner, provider)
+    # Этап 10: облачный анализ — только после подтверждённого предпросмотра маскировки.
     r = await client.post("/api/analyses", json={**body, "cloud_consent": True})
+    assert r.status_code == 422 and r.json()["error"]["code"] == "redaction_preview_required"
+    preview_id = await confirmed_preview(api, client, doc)
+    r = await client.post(
+        "/api/analyses", json={**body, "cloud_consent": True, "redaction_preview_id": preview_id}
+    )
     assert r.status_code == 201, r.text
     created = r.json()
+    assert created["redaction"]["mode"] == "masked"
     assert created["cloud_transfer"] is True and created["cloud_consent_at"]
     assert created["config_snapshot"]["provider"]["is_cloud"] is True
     # Повтор облачного анализа требует нового подтверждения.

@@ -450,3 +450,30 @@ def analysis_body(doc: Doc, model: ModelConfig, **extra: Any) -> dict[str, Any]:
     }
     body.update(extra)
     return body
+
+
+# ------------------------------------------------------------------ маскировка (этап 10)
+
+
+async def create_preview(client: Any, doc: Doc) -> dict[str, Any]:
+    r = await client.post(f"/api/documents/{doc.document_id}/versions/{doc.version_id}/redaction-previews")
+    assert r.status_code == 201, r.text
+    body: dict[str, Any] = r.json()
+    return body
+
+
+async def scan_previews(api: ApiEnv, limit: int = 1) -> int:
+    """Выполняет задачи `redaction_scan` настоящим worker'ом (обнаружение — в дочернем процессе)."""
+    return await run_jobs(api, FakeLLM(), limit=limit, job_types=("redaction_scan",))
+
+
+async def confirmed_preview(api: ApiEnv, client: Any, doc: Doc, **confirm: Any) -> str:
+    """Предпросмотр маскировки: создать → выполнить поиск → подтвердить. Возвращает ID."""
+    preview = await create_preview(client, doc)
+    await scan_previews(api)
+    r = await client.post(
+        f"/api/redaction-previews/{preview['id']}/confirm", json={"reviewed": True, **confirm}
+    )
+    assert r.status_code == 200, r.text
+    preview_id: str = preview["id"]
+    return preview_id

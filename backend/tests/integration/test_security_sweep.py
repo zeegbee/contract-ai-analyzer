@@ -44,8 +44,9 @@ SELF_ROUTES = {
     ("POST", "/api/analyses"),
     ("GET", "/api/models/available"),
     ("POST", "/api/models/{model_id}/cloud-consent"),
+    ("GET", "/api/redaction/config"),
 }
-OBJECT_PARAMS = ("document_id", "version_id", "analysis_id", "export_id")
+OBJECT_PARAMS = ("document_id", "version_id", "analysis_id", "export_id", "preview_id")
 MUTATING = {"POST", "PUT", "PATCH", "DELETE"}
 TITLE = "Секретный договор поставки"
 
@@ -73,6 +74,7 @@ class World:
     version: uuid.UUID
     analysis: uuid.UUID
     export: uuid.UUID
+    preview: uuid.UUID
 
     def fill(self, path: str) -> str:
         values = {
@@ -80,6 +82,7 @@ class World:
             "version_id": self.version,
             "analysis_id": self.analysis,
             "export_id": self.export,
+            "preview_id": self.preview,
             "user_id": self.stranger.id,
         }
         return re.sub(r"\{(\w+)\}", lambda m: str(values.get(m.group(1), uuid.uuid4())), path)
@@ -90,7 +93,7 @@ async def world(api: ApiEnv) -> World:
     owner = await api.create_user(UserRole.analyst)
     stranger = await api.create_user(UserRole.analyst)
     viewer = await api.create_user(UserRole.viewer)
-    doc, version, analysis, export = (uuid.uuid4() for _ in range(4))
+    doc, version, analysis, export, preview = (uuid.uuid4() for _ in range(5))
     await api.execute(
         "INSERT INTO documents (id, owner_id, title, status) VALUES (:id, :o, :t, 'active')",
         id=doc,
@@ -123,7 +126,17 @@ async def world(api: ApiEnv) -> World:
         a=analysis,
         o=owner.id,
     )
-    return World(owner, stranger, viewer, doc, version, analysis, export)
+    # Предпросмотр маскировки владельца (этап 10): чужой предпросмотр — 404 даже при доступе к документу.
+    await api.execute(
+        "INSERT INTO redaction_previews (id, document_id, version_id, created_by_id, settings_revision,"
+        " redaction_version, status, expires_at)"
+        " VALUES (:id, :d, :v, :o, 0, 'redaction-1', 'ready', now() + interval '1 day')",
+        id=preview,
+        d=doc,
+        v=version,
+        o=owner.id,
+    )
+    return World(owner, stranger, viewer, doc, version, analysis, export, preview)
 
 
 def body_for(method: str, path: str, world: World) -> dict[str, Any] | None:
@@ -141,6 +154,10 @@ def body_for(method: str, path: str, world: World) -> dict[str, Any] | None:
         return {"format": "pdf"}
     if path.endswith("/access") and method == "PUT":
         return {"email": world.stranger.email, "permission": "view"}
+    if path == "/api/redaction-previews/{preview_id}" and method == "PATCH":
+        return {"ops": [{"op": "set_entity", "entity_id": "E0001", "masked": False}]}
+    if path.endswith("/confirm"):
+        return {"reviewed": True}
     return {}
 
 
@@ -244,6 +261,7 @@ async def test_owner_reaches_every_object_route(api: ApiEnv, world: World) -> No
                 "version_not_found",
                 "analysis_not_found",
                 "export_not_found",
+                "redaction_preview_not_found",
             }, (path, r.status_code, code)
 
 

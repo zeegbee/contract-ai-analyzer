@@ -17,6 +17,7 @@ import {
   retentionHandler,
   RISKS,
 } from '../../test/fixtures'
+import { type RedactionLog, redactionHandlers } from '../../test/redaction'
 import { renderRoute } from '../../test/render'
 import { server } from '../../test/server'
 
@@ -41,7 +42,9 @@ describe('запуск анализа', () => {
     let estimateBody: Record<string, unknown> | null = null
     let createBody: Record<string, unknown> | null = null
     let headers: Headers | null = null
+    const redaction: RedactionLog = { created: 0, edits: [], confirms: [] }
     server.use(
+      ...redactionHandlers(redaction),
       http.post('*/api/models/m-cloud/cloud-consent', async ({ request }) => {
         consent = await request.json()
         return HttpResponse.json({ provider_config_id: 'p', notice_version: '3', accepted_at: '2026-10-17T10:00:00Z' })
@@ -98,19 +101,29 @@ describe('запуск анализа', () => {
     expect(await screen.findByText(/Частей текста: 3/)).toBeInTheDocument()
     expect(screen.getByText(/≈ 0.0210 USD/)).toBeInTheDocument()
 
-    await user.click(screen.getByRole('button', { name: 'Запустить анализ' }))
+    // Облачная модель: запуск — только через обязательный предпросмотр маскировки (этап 10).
+    expect(screen.queryByRole('button', { name: 'Запустить анализ' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Проверить маскировку' }))
+    expect(await screen.findByRole('heading', { name: 'Проверка маскировки' })).toBeInTheDocument()
+    expect(createBody).toBeNull()
+    const confirm = await screen.findByRole('button', { name: 'Подтвердить и запустить анализ' })
+    expect(confirm).toBeDisabled()
+    await user.click(screen.getByLabelText('Подсвеченные данные проверены'))
+    await user.click(confirm)
     await waitFor(() => expect(createBody).not.toBeNull())
+    expect(redaction.confirms).toEqual([{ mode: 'masked', reviewed: true }])
     expect(createBody).toEqual({
       document_id: 'd-1',
-      version_id: null,
+      version_id: 'v-1',
       party: 'named',
       party_name: 'ООО «Бета»',
       categories: ['payment', 'contradiction'],
       depth: 'deep',
       model_id: 'm-cloud',
       cloud_consent: true,
+      redaction_preview_id: 'rp-1',
     })
-    expect(estimateBody).toEqual(createBody)
+    expect(estimateBody).toEqual({ ...(createBody ?? {}), version_id: null, redaction_preview_id: undefined })
     const sent = headers as Headers | null
     expect(sent?.get('Idempotency-Key')).toMatch(/^[0-9a-f]{32}$/)
     expect(sent?.get('X-CSRF-Token')).toBe('csrf-1')

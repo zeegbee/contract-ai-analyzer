@@ -14,6 +14,10 @@
 - Перед каждым вызовом облачной модели заново проверяется, что облачные модели и провайдер
   включены (аварийное отключение облака останавливает уже запущенные анализы).
 - В логи пишутся только метаданные (этап, номер чанка, коды, токены) — без текста договора.
+- Маскировка (этап 10): при таблице соответствий анализа все промпты строятся по замаскированному
+  представлению (`self.pindex`), проверка цитат и страницы — по исходному тексту (`self.index`):
+  цитата ищется в замаскированном тексте, диапазон переводится картой смещений в исходный текст и
+  проверяется там шагом A. Свободный текст ответа — обратная подстановка меток.
 """
 
 from __future__ import annotations
@@ -51,6 +55,7 @@ from app.analysis.evidence import (
     match_evidence,
 )
 from app.analysis.injection import scan
+from app.analysis.quotes import normalize, unescape_quote
 from app.analysis.report import ChunkInfo, RiskInfo, build_coverage, build_summary
 from app.analysis.schemas import (
     QuoteRetryOut,
@@ -76,6 +81,7 @@ from app.models.enums import (
     AnalysisStatus,
     ChunkStatus,
     DocumentStatus,
+    MatchStatus,
     PageSource,
     ProviderType,
     RelevanceStatus,
@@ -84,7 +90,10 @@ from app.models.enums import (
     StructuredOutputSupport,
     ValidationStatus,
 )
+from app.redaction.mask import MaskView
+from app.security.secretbox import SecretUndecryptable
 from app.services.catalog import cloud_models_enabled
+from app.services.redaction import load_mapping
 
 log = get_logger(__name__)
 
@@ -394,6 +403,18 @@ class AnalysisRunner:
             if not fragments:
                 raise AnalysisFailed("version_has_no_text")
             self.index = FragmentIndex(fragments, pages)
+            try:
+                mapping = await load_mapping(db, self.llm_factory.secret_box, self.analysis_id)
+            except SecretUndecryptable:
+                raise AnalysisFailed("redaction_mapping_undecryptable") from None
+            # Промпты — по замаскированному представлению; без таблицы соответствий — по исходному тексту.
+            self.view: MaskView | None = MaskView(fragments, mapping) if mapping else None
+            self.pindex = FragmentIndex(self.view.masked) if self.view else self.index
+            self.prompt_party_name = (
+                self.view.mask_free_text(self.party_name)
+                if self.view and self.party_name
+                else self.party_name
+            )
             self.chunks = [
                 _Chunk(
                     c.id,
@@ -631,7 +652,7 @@ class AnalysisRunner:
     async def _structure(self) -> None:
         if "structure" in self.stage_results:
             return
-        fragments = self.index.fragments
+        fragments = self.pindex.fragments
         sections = build_sections(fragments)
         structure: dict[str, Any] = {
             "sections": sections,
@@ -644,7 +665,7 @@ class AnalysisRunner:
             heads = outline(fragments, sections)
             edges = edge_fragments(fragments)
             messages = prompts.structure_messages(
-                outline=[self._pf(f) for f in heads], text=[self._pf(f) for f in edges]
+                outline=[self._pf(f) for f in heads], text=[self._pf(f) for f in edges], masked=self.masked
             )
             try:
                 out = await self._generate(self.target, StructureOut, messages, "contract_structure")
@@ -659,8 +680,14 @@ class AnalysisRunner:
                 analysis, stage="chunks", chunks_total=len(self.chunks), chunks_done=self._done_count()
             )
 
+    @property
+    def masked(self) -> bool:
+        return self.view is not None
+
     def _pf(self, f: FragmentRef) -> prompts.PromptFragment:
-        return prompts.PromptFragment(key=f.key, text=f.text, clause_ref=f.clause_ref, kind=f.kind)
+        """Фрагмент для промпта — текст из представления для модели (при маскировке — с метками)."""
+        text = self.pindex.by_key[f.key].text
+        return prompts.PromptFragment(key=f.key, text=text, clause_ref=f.clause_ref, kind=f.kind)
 
     def _done_count(self) -> int:
         return sum(1 for c in self.chunks if c.status is ChunkStatus.done)
@@ -676,21 +703,22 @@ class AnalysisRunner:
                 continue
             previous_end = self.chunks[pos - 1].seq_end if pos > 0 else -1
             fragments = [
-                self.index.by_seq[s]
+                self.pindex.by_seq[s]
                 for s in range(chunk.seq_start, chunk.seq_end + 1)
-                if s in self.index.by_seq
+                if s in self.pindex.by_seq
             ]
             context = frozenset(f.key for f in fragments if f.seq <= previous_end)
             messages = prompts.chunk_messages(
                 fragments=[self._pf(f) for f in fragments],
                 context_keys=context,
                 party=self.party,
-                party_name=self.party_name,
+                party_name=self.prompt_party_name,
                 categories=self.categories,
                 depth=self.depth,
                 structure=structure,
                 part=chunk.index + 1,
                 parts=total,
+                masked=self.masked,
             )
             async with self._tx() as (db, _analysis):
                 await db.execute(
@@ -751,10 +779,12 @@ class AnalysisRunner:
             result = {"status": "skipped", "reason": "token_budget_exhausted"}
         else:
             structure = self.stage_results.get("structure") or {}
-            heads = outline(self.index.fragments, structure.get("sections", []))
+            heads = outline(self.pindex.fragments, structure.get("sections", []))
             used = sum(len(f.text) + 2 for f in heads)
             keys = key_fragments(
-                self.index.fragments, max(2000, self.text_budget_chars - used), exclude={f.seq for f in heads}
+                self.pindex.fragments,
+                max(2000, self.text_budget_chars - used),
+                exclude={f.seq for f in heads},
             )
             cards = []
             for chunk in self.chunks:
@@ -774,11 +804,12 @@ class AnalysisRunner:
                 outline=[self._pf(f) for f in heads],
                 key_fragments=[self._pf(f) for f in keys],
                 party=self.party,
-                party_name=self.party_name,
+                party_name=self.prompt_party_name,
                 categories=self.categories,
                 structure=structure,
                 find_contradictions=find_contradictions,
                 find_missing=find_missing,
+                masked=self.masked,
             )
             scope = SeqScope.of([f.seq for f in heads] + [f.seq for f in keys])
             try:
@@ -850,13 +881,25 @@ class AnalysisRunner:
 
         merged.sort(key=order)
         scopes: dict[str, list[list[int]]] = {}
+        masked_texts: dict[str, dict[str, str]] = {}
         async with self._tx() as (db, analysis):
             for number, m in enumerate(merged, start=1):
-                risk = m.risk
                 key = f"R-{number:03d}"
+                notes: dict[str, Any] = {}
+                if self.view is not None:
+                    # Для следующих промптов (повтор цитаты, верификатор) — формулировки с метками.
+                    masked_texts[key] = {
+                        "title": m.risk.title,
+                        "description": m.risk.description,
+                        "reason": m.risk.reason,
+                    }
+                    risk, unknown = self._unmask_risk(m.risk)
+                    if unknown:
+                        notes["redaction_unknown_labels"] = True
+                else:
+                    risk = m.risk
                 scope = SeqScope.of(m.scope_seqs)
                 scopes[key] = scope.to_json()
-                notes: dict[str, Any] = {}
                 if m.merged_count > 1:
                     notes["merged_from"] = m.merged_count
                 if "cross_section" in m.sources:
@@ -881,7 +924,7 @@ class AnalysisRunner:
                 if risk.kind is RiskKind.missing_clause:
                     search_scope = {
                         "model_scope": risk.search_scope,
-                        "checked_sections": self._sections_for(m.scope_seqs)[:100],
+                        "checked_sections": self._unmask(self._sections_for(m.scope_seqs)[:100]),
                         "checked_fragments": len(m.scope_seqs),
                         "limitations": [
                             "Отсутствие условия установлено моделью по просмотренному тексту; сервер "
@@ -919,6 +962,8 @@ class AnalysisRunner:
                     db.add(self._evidence_row(row.id, item.fragment_id, item.quote, scope, attempt=0))
             self.stage_results["materialized"] = True
             self.stage_results["risk_scopes"] = scopes
+            if masked_texts:
+                self.stage_results["masked_risks"] = masked_texts
             self.stage_results["dedup"] = {
                 "candidates": len(candidates),
                 "risks": len(merged),
@@ -930,10 +975,101 @@ class AnalysisRunner:
             "analysis_risks_materialized", candidates=len(candidates), risks=len(merged), dropped=dropped
         )
 
+    # ---------------------------------------------------------------- маскировка: обратная подстановка
+
+    def _unmask(self, value: Any) -> Any:
+        return self.view.unmask_obj(value) if self.view is not None else value
+
+    def _unmask_risk(self, risk: RiskItem) -> tuple[RiskItem, bool]:
+        assert self.view is not None
+        unknown = False
+
+        def text(value: str | None) -> str | None:
+            nonlocal unknown
+            if value is None:
+                return None
+            result, bad = self.view.unmask(value)  # type: ignore[union-attr]
+            unknown = unknown or bad
+            return result
+
+        values = {
+            name: text(getattr(risk, name))
+            for name in (
+                "title",
+                "description",
+                "reason",
+                "consequences",
+                "recommendation",
+                "suggested_revision",
+            )
+        }
+        values["title"] = (values["title"] or "")[:300]
+        updated = risk.model_copy(update={**values, "search_scope": self._unmask(risk.search_scope)})
+        return updated, unknown
+
+    def _risk_prompt_texts(self, risk: AnalysisRisk) -> dict[str, str]:
+        """Формулировки риска для промпта: при маскировке — сохранённые версии с метками."""
+        if self.view is not None:
+            saved = (self.stage_results.get("masked_risks") or {}).get(risk.risk_key)
+            if saved:
+                return dict(saved)
+            return {
+                "title": self.view.mask_free_text(risk.title),
+                "description": self.view.mask_free_text(risk.description),
+                "reason": self.view.mask_free_text(risk.reason),
+            }
+        return {"title": risk.title, "description": risk.description, "reason": risk.reason}
+
+    def _original_slice(self, start: int, end: int) -> str:
+        parts = [
+            f.text[max(start, f.char_start) - f.char_start : min(end, f.char_end) - f.char_start]
+            for f in self.index.fragments
+            if f.char_start < end and start < f.char_end
+        ]
+        return SEPARATOR.join(parts)
+
+    def _match_masked(self, scope: SeqScope, fragment_key: str, quote: str) -> tuple[EvidenceMatch, str]:
+        """Цитата модели (с метками) → совпадение в замаскированном тексте → исходный текст → шаг A."""
+        assert self.view is not None
+        masked = match_evidence(self.pindex, scope, fragment_key, quote)
+        unmasked_quote, unknown = self.view.unmask(quote)
+        original_fragment = self.index.by_key.get(fragment_key)
+        if masked.status not in MATCHED or masked.start is None or masked.end is None:
+            notes = list(masked.notes) + (["redaction_unknown_label"] if unknown else [])
+            return (
+                EvidenceMatch(
+                    masked.status,
+                    original_fragment if masked.fragment is not None else None,
+                    quote_normalized=normalize(unescape_quote(unmasked_quote)).text,
+                    notes=notes,
+                ),
+                unmasked_quote,
+            )
+        o_start, o_end = self.view.to_original_range(masked.start, masked.end)
+        original_quote = self._original_slice(o_start, o_end)
+        match = match_evidence(self.index, scope, fragment_key, original_quote)
+        if match.status not in MATCHED:
+            return (
+                EvidenceMatch(
+                    MatchStatus.not_found,
+                    original_fragment,
+                    quote_normalized=normalize(original_quote).text,
+                    notes=["redaction_unmask_mismatch"],
+                ),
+                original_quote,
+            )
+        # Статус — по совпадению цитаты модели (точное или после нормализации) в тексте, который она видела.
+        match.status = masked.status
+        match.notes = sorted(set(masked.notes) | set(match.notes) | {"redaction_masked_quote"})
+        return match, original_quote
+
     def _evidence_row(
         self, risk_id: uuid.UUID, fragment_key: str, quote: str, scope: SeqScope, *, attempt: int
     ) -> RiskEvidence:
-        match: EvidenceMatch = match_evidence(self.index, scope, fragment_key, quote)
+        if self.view is None:
+            match: EvidenceMatch = match_evidence(self.index, scope, fragment_key, quote)
+        else:
+            match, quote = self._match_masked(scope, fragment_key, quote)
         return RiskEvidence(
             id=uuid.uuid4(),
             risk_id=risk_id,
@@ -1029,13 +1165,14 @@ class AnalysisRunner:
                 if e.claimed_fragment_key in self.index.by_key
             ]
             fragments = self._context_fragments(scope, claimed)
+            texts = self._risk_prompt_texts(risk)
             messages = prompts.quote_retry_messages(
                 risk={
-                    "title": risk.title,
+                    "title": texts["title"],
                     "category": risk.category,
                     "kind": risk.kind.value,
-                    "description": risk.description,
-                    "reason": risk.reason,
+                    "description": texts["description"],
+                    "reason": texts["reason"],
                 },
                 problems=[
                     p.replace("not_found", "цитата не найдена в тексте фрагмента")
@@ -1044,6 +1181,7 @@ class AnalysisRunner:
                     for p in problems
                 ],
                 fragments=[self._pf(f) for f in fragments],
+                masked=self.masked,
             )
             self.stage_results["quote_retries_used"] = used + 1
             try:
@@ -1066,32 +1204,40 @@ class AnalysisRunner:
             log.info("analysis_quote_retry", risk=risk.risk_key, outcome=notes["quote_retry"])
 
     def _context_fragments(self, scope: SeqScope, claimed: Sequence[int]) -> list[FragmentRef]:
-        seqs = [s for s in scope.seqs() if s in self.index.by_seq]
+        seqs = [s for s in scope.seqs() if s in self.pindex.by_seq]
         if claimed:
             seqs.sort(key=lambda s: min(abs(s - c) for c in claimed))
         picked: list[int] = []
         used = 0
         for s in seqs:
-            size = len(self.index.by_seq[s].text) + 2
+            size = len(self.pindex.by_seq[s].text) + 2
             if used + size > self.text_budget_chars and picked:
                 break
             picked.append(s)
             used += size
-        return [self.index.by_seq[s] for s in sorted(picked)]
+        return [self.pindex.by_seq[s] for s in sorted(picked)]
 
     def _span_text(self, e: RiskEvidence) -> tuple[str, str, list[str]]:
-        """Цитата — дословный текст документа по смещениям совпадения; контекст — фрагменты ±1."""
+        """Цитата — дословный текст документа по смещениям совпадения; контекст — фрагменты ±1.
+
+        При маскировке — тот же участок замаскированного текста (смещения переводятся картой).
+        """
         span_ids = set(e.fragment_ids_span)
-        span = [f for f in self.index.fragments if f.id in span_ids]
+        index = self.pindex
+        span = [f for f in index.fragments if f.id in span_ids]
         if not span or e.match_char_start is None or e.match_char_end is None:
-            return e.quote, e.quote, []
+            fallback = self.view.mask_free_text(e.quote) if self.view is not None else e.quote
+            return fallback, fallback, []
+        start, end = e.match_char_start, e.match_char_end
+        if self.view is not None:
+            start, end = self.view.to_masked_range(start, end)
         combined = SEPARATOR.join(f.text for f in span)
         base = span[0].char_start
-        quote = combined[e.match_char_start - base : e.match_char_end - base]
+        quote = combined[start - base : end - base]
         neighbours = [
-            self.index.by_seq.get(span[0].seq - 1),
+            index.by_seq.get(span[0].seq - 1),
             *span,
-            self.index.by_seq.get(span[-1].seq + 1),
+            index.by_seq.get(span[-1].seq + 1),
         ]
         context = SEPARATOR.join(f.text for f in neighbours if f is not None)
         if len(context) > VERIFIER_CONTEXT_CHARS * 2:
@@ -1122,14 +1268,16 @@ class AnalysisRunner:
                 quote, context, span_kinds = self._span_text(e)
                 items.append(prompts.VerifierEvidence(number, quote, context))
                 kinds[number] = span_kinds
+            texts = self._risk_prompt_texts(risk)
             messages = prompts.verifier_messages(
                 risk={
-                    "title": risk.title,
+                    "title": texts["title"],
                     "category": risk.category,
                     "kind": risk.kind.value,
-                    "reason": risk.reason,
+                    "reason": texts["reason"],
                 },
                 evidence=items,
+                masked=self.masked,
             )
             try:
                 out = await self._generate(
@@ -1206,7 +1354,8 @@ class AnalysisRunner:
                         risk.kind, risk.severity, status, notes.get("verifier"), notes.get("quote_retry")
                     )
                 )
-            structure = self.stage_results.get("structure") or {}
+            # Структура хранится в виде, который видела модель; в отчёт — с исходными значениями.
+            structure = self._unmask(self.stage_results.get("structure") or {})
             coverage, warnings = build_coverage(
                 fragment_keys={f.seq: f.key for f in self.index.fragments},
                 chunks=[

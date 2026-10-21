@@ -288,8 +288,8 @@ const cloudModel: AvailableModel = {
   consent_required: true,
 }
 
-describe('выбор модели', () => {
-  it('показывает только модели с сервера и требует подтверждения для облачной', async () => {
+describe('модели в профиле', () => {
+  it('показывает списком модели с сервера, без выбора и подтверждения', async () => {
     serveMe(makeMe('analyst'))
     server.use(
       http.get('*/api/auth/sessions', () => HttpResponse.json([])),
@@ -300,23 +300,19 @@ describe('выбор модели', () => {
         ]),
       ),
     )
-    let consent: unknown = null
-    server.use(
-      http.post('*/api/models/m-cloud/cloud-consent', async ({ request }) => {
-        consent = await request.json()
-        return HttpResponse.json({ provider_config_id: 'p', notice_version: '3', accepted_at: '2026-10-16T10:00:00Z' }, { status: 201 })
-      }),
-    )
     renderRoute('/account')
-    const select = await screen.findByRole('combobox', { name: 'Модель' })
-    expect(within(select).getAllByRole('option')).toHaveLength(3)
-    const user = userEvent.setup()
-    await user.selectOptions(select, 'm-local')
-    expect(screen.queryByText(/будут переданы внешнему провайдеру/)).not.toBeInTheDocument()
-    await user.selectOptions(select, 'm-cloud')
-    expect(screen.getByText('Фрагменты договора будут переданы внешнему провайдеру.')).toBeInTheDocument()
-    await user.click(screen.getByRole('checkbox', { name: /согласен на передачу/ }))
-    await waitFor(() => expect(consent).toEqual({ notice_version: '3' }))
+    const section = (await screen.findByRole('heading', { name: 'Модели, доступные мне для анализа' })).closest(
+      'section',
+    ) as HTMLElement
+    const items = await within(section).findAllByRole('listitem')
+    expect(items).toHaveLength(2)
+    expect(items[0]).toHaveTextContent('Локальная')
+    expect(items[0]).toHaveTextContent('локальная')
+    expect(items[1]).toHaveTextContent('Облачная')
+    expect(items[1]).toHaveTextContent('облачная')
+    expect(items[1]).toHaveTextContent('OpenRouter')
+    expect(within(section).queryByRole('combobox')).not.toBeInTheDocument()
+    expect(within(section).queryByRole('checkbox')).not.toBeInTheDocument()
   })
 
   it('пустой список и отключённое облако', async () => {

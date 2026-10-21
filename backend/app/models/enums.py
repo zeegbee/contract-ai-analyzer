@@ -194,3 +194,17 @@ class BackupTrigger(StrEnum):
     scheduled = "scheduled"  # по расписанию (deploy/backup.sh --scheduled)
     requested = "requested"  # «Запустить сейчас» в UI, выполнен планировщиком
     manual = "manual"  # deploy/backup.sh вручную на сервере
+
+
+class RedactionPreviewStatus(StrEnum):
+    scanning = "scanning"
+    ready = "ready"
+    failed = "failed"
+    confirmed = "confirmed"
+    expired = "expired"
+
+
+class RedactionMode(StrEnum):
+    masked = "masked"
+    # Пользователь отдельно подтвердил отправку без маскировки (разрешено настройкой `allow_unmasked`).
+    unmasked_by_user = "unmasked_by_user"

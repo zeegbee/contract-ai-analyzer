@@ -51,8 +51,10 @@ from app.models.enums import (
     ExtractionStatus,
     JobStatus,
     PageSource,
+    RedactionMode,
     RiskCategory,
 )
+from app.models.redaction import AnalysisRedaction
 from app.models.system import Job
 from app.models.users import ConsentRecord, User
 from app.schemas.analyses import (
@@ -62,6 +64,7 @@ from app.schemas.analyses import (
     EstimateOut,
     EvidenceOut,
     ProgressOut,
+    RedactionSummaryOut,
     RiskOut,
 )
 from app.schemas.catalog import ModelPurpose
@@ -72,7 +75,8 @@ from app.security.scoped import (
     get_document_for,
     get_version_for,
 )
-from app.services import catalog
+from app.security.secretbox import SecretBox
+from app.services import catalog, redaction
 from app.services.audit import AuditAction, record
 
 RUN_ANALYSIS_JOB = "run_analysis"
@@ -226,18 +230,46 @@ async def plan_analysis(
             if p.is_cloud:
                 await _require_cloud_notice(db, user, p)
 
-    sizes = [
-        FragmentSize(seq, chars)
-        for seq, chars in (
-            await db.execute(
-                select(DocumentFragment.seq, func.char_length(DocumentFragment.text))
-                .where(DocumentFragment.version_id == version.id)
-                .order_by(DocumentFragment.seq)
-            )
-        ).all()
-    ]
+    sizes = await fragment_sizes(db, version.id)
     if not sizes:
         raise ConflictError(safe_message("version_has_no_text"), code="version_has_no_text")
+    return _plan_chunks(
+        settings,
+        body,
+        document=document,
+        version=version,
+        model=model,
+        provider=provider,
+        verifier=verifier,
+        sizes=list(sizes.values()),
+    )
+
+
+async def fragment_sizes(db: AsyncSession, version_id: uuid.UUID) -> dict[str, FragmentSize]:
+    """Ключ фрагмента → (seq, длина текста) в порядке текста."""
+    rows = (
+        await db.execute(
+            select(
+                DocumentFragment.fragment_key, DocumentFragment.seq, func.char_length(DocumentFragment.text)
+            )
+            .where(DocumentFragment.version_id == version_id)
+            .order_by(DocumentFragment.seq)
+        )
+    ).all()
+    return {str(key): FragmentSize(seq, chars) for key, seq, chars in rows}
+
+
+def _plan_chunks(
+    settings: Settings,
+    body: AnalysisCreateIn,
+    *,
+    document: Document,
+    version: DocumentVersion,
+    model: ModelConfig,
+    provider: ProviderConfig,
+    verifier: tuple[ModelConfig, ProviderConfig] | None,
+    sizes: list[FragmentSize],
+) -> Plan:
     max_output = model.max_output_tokens or settings.analysis_default_max_output_tokens
     try:
         budget = text_budget_tokens(model.context_window, max_output, body.depth)
@@ -260,6 +292,24 @@ async def plan_analysis(
         cloud=cloud,
     )
     return Plan(document, version, model, provider, verifier, chunks, budget, max_output, estimate)
+
+
+async def replan_masked(
+    db: AsyncSession, settings: Settings, body: AnalysisCreateIn, plan: Plan, mapping: dict[str, Any]
+) -> Plan:
+    """Чанки и оценка по длинам замаскированного текста (метки длиннее или короче значений)."""
+    sizes = await fragment_sizes(db, plan.version.id)
+    masked = redaction.masked_sizes(mapping, {k: s.chars for k, s in sizes.items()})
+    return _plan_chunks(
+        settings,
+        body,
+        document=plan.document,
+        version=plan.version,
+        model=plan.model,
+        provider=plan.provider,
+        verifier=plan.verifier,
+        sizes=[FragmentSize(s.seq, masked[k]) for k, s in sizes.items()],
+    )
 
 
 def build_snapshot(settings: Settings, plan: Plan) -> dict[str, Any]:
@@ -332,6 +382,32 @@ async def active_count(db: AsyncSession, user_id: uuid.UUID) -> int:
     )
 
 
+async def _apply_redaction(
+    db: AsyncSession, settings: Settings, user: User, *, box: SecretBox, body: AnalysisCreateIn, plan: Plan
+) -> tuple[Plan, redaction.ConsumedPreview | None]:
+    """Облачная модель — только после подтверждённого предпросмотра маскировки (этап 10)."""
+    if not plan.cloud:
+        if body.redaction_preview_id is not None:
+            raise AppError(
+                "Маскировка применяется только к облачным моделям",
+                code="redaction_not_applicable",
+                status_code=422,
+            )
+        return plan, None
+    if body.redaction_preview_id is None:
+        raise AppError(
+            "Проверьте и подтвердите маскировку перед облачным анализом",
+            code="redaction_preview_required",
+            status_code=422,
+        )
+    consumed = await redaction.consume_preview(
+        db, user, box, preview_id=body.redaction_preview_id, version=plan.version
+    )
+    if consumed.mapping is not None:
+        plan = await replan_masked(db, settings, body, plan, consumed.mapping)
+    return plan, consumed
+
+
 async def create_analysis(
     db: AsyncSession,
     settings: Settings,
@@ -340,6 +416,7 @@ async def create_analysis(
     ip: str | None,
     body: AnalysisCreateIn,
     idempotency_key: str | None,
+    box: SecretBox,
 ) -> tuple[Analysis, bool]:
     """Создаёт анализ, чанки и задачу одной транзакцией. Возвращает (анализ, повтор по ключу)."""
     if idempotency_key:
@@ -354,6 +431,7 @@ async def create_analysis(
             return existing, True
 
     plan = await plan_analysis(db, settings, user, body)
+    plan, consumed = await _apply_redaction(db, settings, user, box=box, body=body, plan=plan)
     if not plan.estimate.within_limit:
         raise AppError(
             "Оценка объёма анализа превышает лимит токенов. Выберите меньшую глубину или другую модель.",
@@ -367,6 +445,20 @@ async def create_analysis(
         raise AnalysisLimitExceeded(details={"limit": settings.analysis_max_active_per_user})
 
     now = _now()
+    snapshot = build_snapshot(settings, plan)
+    snapshot["redaction"] = (
+        {
+            "mode": consumed.mode.value,
+            "redaction_version": consumed.preview.redaction_version,
+            "settings_revision": consumed.settings_revision,
+            "counts": consumed.counts,
+            "unmasked_confirmed_at": consumed.preview.unmasked_confirmed_at.isoformat()
+            if consumed.preview.unmasked_confirmed_at
+            else None,
+        }
+        if consumed is not None
+        else None
+    )
     analysis = Analysis(
         id=uuid.uuid4(),
         document_id=plan.document.id,
@@ -378,7 +470,7 @@ async def create_analysis(
         categories=[c.value for c in body.categories],
         depth=body.depth,
         model_config_id=plan.model.id,
-        config_snapshot=build_snapshot(settings, plan),
+        config_snapshot=snapshot,
         cloud_transfer=plan.cloud,
         cloud_consent_at=now if plan.cloud else None,
         idempotency_key=idempotency_key,
@@ -386,6 +478,8 @@ async def create_analysis(
     )
     db.add(analysis)
     await db.flush()
+    if consumed is not None:
+        redaction.attach(db, box, analysis.id, consumed)
     for chunk in plan.chunks:
         db.add(
             AnalysisChunk(
@@ -424,8 +518,25 @@ async def create_analysis(
             "categories": len(body.categories),
             "chunks": len(plan.chunks),
             "estimated_tokens": plan.estimate.estimated_tokens,
+            "redaction": consumed.mode.value if consumed is not None else "not_applicable",
+            "redaction_values": consumed.counts.get("values", 0) if consumed is not None else 0,
         },
     )
+    if consumed is not None and consumed.mode is RedactionMode.unmasked_by_user:
+        record(
+            db,
+            AuditAction.redaction_sent_unmasked,
+            actor_id=user.id,
+            target_type="analysis",
+            target_id=analysis.id,
+            ip=ip,
+            details={
+                "document_id": str(plan.document.id),
+                "provider": str(plan.provider.id),
+                "categories": consumed.counts.get("categories", {}),
+                "values": consumed.counts.get("values", 0),
+            },
+        )
     try:
         await db.commit()
     except IntegrityError:
@@ -518,6 +629,18 @@ async def retry_analysis(
             cloud_consent=cloud_consent,
         )
     if analysis.cloud_transfer:
+        row = await db.get(AnalysisRedaction, analysis.id)
+        if row is None:
+            # Облачный анализ до этапа 10 (без маскировки) не повторяется — только новый запуск.
+            raise ConflictError(
+                "Анализ запущен без проверки маскировки. Запустите новый анализ.",
+                code="redaction_required_for_retry",
+            )
+        allowed = (await redaction.get_state(db)).settings.allow_unmasked
+        if row.mode is RedactionMode.unmasked_by_user and not allowed:
+            raise PermissionDenied(
+                "Отправка без маскировки запрещена настройками", code="redaction_unmasked_not_allowed"
+            )
         for provider_id in {snapshot["provider"]["id"], verifier.get("provider", {}).get("id")} - {None}:
             provider = await db.get(ProviderConfig, uuid.UUID(str(provider_id)))
             if provider is not None and provider.is_cloud:
@@ -652,6 +775,20 @@ def summary_view(analysis: Analysis, *, can_analyze: bool, document_title: str) 
     )
 
 
+def _redaction_summary(snapshot: dict[str, Any]) -> RedactionSummaryOut | None:
+    info = snapshot.get("redaction")
+    if not info:
+        return None
+    counts = info.get("counts") or {}
+    return RedactionSummaryOut(
+        mode=info["mode"],
+        values=int(counts.get("values", 0)),
+        occurrences=int(counts.get("occurrences", 0)),
+        categories=dict(counts.get("categories", {})),
+        unmasked_confirmed_at=info.get("unmasked_confirmed_at"),
+    )
+
+
 def detail_view(analysis: Analysis, *, can_analyze: bool, document_title: str) -> AnalysisDetailOut:
     snapshot = dict(analysis.config_snapshot)
     estimate = snapshot.get("estimate")
@@ -663,6 +800,7 @@ def detail_view(analysis: Analysis, *, can_analyze: bool, document_title: str) -
         coverage=analysis.coverage,
         usage=analysis.usage,
         estimate=EstimateOut.model_validate(estimate) if estimate else None,
+        redaction=_redaction_summary(snapshot),
     )
 
 

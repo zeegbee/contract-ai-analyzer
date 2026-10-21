@@ -65,6 +65,12 @@ class AuditAction(StrEnum):
     analysis_retried = "analysis.retried"
     export_created = "export.created"
     export_downloaded = "export.downloaded"
+    # Маскировка перед облачным анализом (этап 10)
+    redaction_settings_updated = "redaction.settings_updated"
+    redaction_unmasked_allowed = "redaction.unmasked_allowed"
+    redaction_unmasked_disallowed = "redaction.unmasked_disallowed"
+    redaction_preview_confirmed = "redaction.preview_confirmed"
+    redaction_sent_unmasked = "redaction.sent_unmasked"
     # Резервное копирование (этап 08A)
     backup_requested = "backup.requested"
     backup_completed = "backup.completed"

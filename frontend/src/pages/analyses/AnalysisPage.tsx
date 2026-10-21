@@ -13,6 +13,7 @@ import {
   retryAnalysis,
   type Summary,
 } from '../../api/analyses'
+import { fetchRedactionConfig, REDACTION_CONFIG_KEY } from '../../api/redaction'
 import { ErrorNotice } from '../../components/ErrorNotice'
 import { Button, Notice, PageTitle } from '../../components/ui'
 import { ru } from '../../i18n/ru'
@@ -61,6 +62,31 @@ function Progress({ analysis }: { analysis: AnalysisDetail }) {
   )
 }
 
+/** Строка о маскировке: сколько значений скрыто по категориям или что текст отправлен без маскировки. */
+function RedactionLine({ analysis, isCloud }: { analysis: AnalysisDetail; isCloud: boolean }) {
+  const tr = ru.redaction.report
+  const info = analysis.redaction
+  const config = useQuery({
+    queryKey: REDACTION_CONFIG_KEY,
+    queryFn: ({ signal }) => fetchRedactionConfig(signal),
+    enabled: Boolean(info && info.mode === 'masked'),
+  })
+  if (!info) {
+    return 'redaction' in analysis.config_snapshot && !isCloud ? <Row label={tr.title}>{tr.notApplicable}</Row> : null
+  }
+  if (info.mode !== 'masked') return <Row label={tr.title}>{tr.unmasked}</Row>
+  const names = new Map((config.data?.categories ?? []).map((c) => [c.code, c.short]))
+  const listed = Object.entries(info.categories)
+    .map(([code, n]) => `${names.get(code) ?? code} — ${n}`)
+    .join(', ')
+  return (
+    <Row label={tr.title}>
+      {tr.masked(info.values)}
+      {listed ? ` (${listed})` : ''}
+    </Row>
+  )
+}
+
 function SummaryPanel({ analysis, summary }: { analysis: AnalysisDetail; summary: Summary | null }) {
   const snapshot = analysis.config_snapshot as {
     model?: { display_name?: string; external_model_id?: string }
@@ -105,6 +131,7 @@ function SummaryPanel({ analysis, summary }: { analysis: AnalysisDetail; summary
         <Row label={t.provider}>
           {snapshot.provider?.name ?? '—'} · {snapshot.provider?.is_cloud ? t.cloud : t.local}
         </Row>
+        <RedactionLine analysis={analysis} isCloud={Boolean(snapshot.provider?.is_cloud)} />
         <Row label={t.verifier}>
           {snapshot.verifier?.same_as_analysis === false ? (snapshot.verifier.model?.display_name ?? '—') : t.sameModel}
         </Row>

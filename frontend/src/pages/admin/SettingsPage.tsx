@@ -7,6 +7,7 @@ import { ErrorNotice } from '../../components/ErrorNotice'
 import { PageTitle } from '../../components/ui'
 import { ru } from '../../i18n/ru'
 import { BackupSection } from './BackupSection'
+import { RedactionSection } from './RedactionSection'
 import { RetentionSection } from './RetentionSection'
 
 const t = ru.settings
@@ -38,6 +39,8 @@ export function SettingsPage() {
           {t.llmLink}
         </Link>
       </section>
+
+      <RedactionSection />
 
       <RetentionSection />
 

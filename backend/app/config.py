@@ -96,6 +96,11 @@ class Settings(BaseSettings):
     # Как часто во время вызова модели проверяется запрос отмены.
     analysis_cancel_poll_seconds: float = Field(default=2.0, gt=0, le=60)
 
+    # --- Маскировка перед облачным анализом (этап 10) ---
+    # Обнаружение (NER, шаблоны) выполняется в дочернем процессе worker'а с этими лимитами.
+    redaction_scan_timeout_seconds: int = Field(default=300, ge=10, le=3600)
+    redaction_scan_memory_mb: int = Field(default=2048, ge=512, le=16_384)
+
     # --- Экспорт отчётов ---
     # Сколько часов хранится сформированный файл экспорта (затем удаляется worker'ом).
     export_ttl_hours: int = Field(default=168, ge=1, le=24 * 365)

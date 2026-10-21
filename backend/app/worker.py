@@ -27,6 +27,7 @@ from app.models.system import WorkerHeartbeat
 from app.security.secretbox import SecretBox
 from app.services.analyses import reconcile_orphans
 from app.services.exports import expire_exports
+from app.services.redaction import delete_expired_previews
 from app.services.retention import apply_retention
 from app.storage import LocalStorage
 
@@ -87,6 +88,8 @@ class Worker:
                         log.info("exports_expired", count=expired)
                     # Политика хранения документов (по умолчанию выключена — ничего не делает).
                     await apply_retention(self.session_factory)
+                    # Просроченные неиспользованные предпросмотры маскировки (временные данные).
+                    await delete_expired_previews(self.session_factory)
                     last_reap = time.monotonic()
             except Exception as exc:
                 log.warning("housekeeping_failed", exc_type=type(exc).__name__)

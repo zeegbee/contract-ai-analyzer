@@ -5,11 +5,13 @@ import { describe, expect, it } from 'vitest'
 
 import { makeMe, serveMe } from '../../test/auth'
 import { backupHandler, makeRetention, retentionHandler } from '../../test/fixtures'
+import { redactionSettingsHandler } from '../../test/redaction'
 import { renderRoute } from '../../test/render'
 import { server } from '../../test/server'
 
 const settingsHandlers = [
   http.get('*/api/admin/system-settings', () => HttpResponse.json({ groups: {}, editable: false })),
+  redactionSettingsHandler(),
   http.get('*/api/admin/llm-settings', () =>
     HttpResponse.json({ cloud_models_enabled: false, cloud_notice: { version: '1', text: 'x' }, can_edit: false }),
   ),

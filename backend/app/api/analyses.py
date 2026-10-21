@@ -9,7 +9,7 @@ from __future__ import annotations
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Header, Query, Response
+from fastapi import APIRouter, Header, Query, Request, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -76,6 +76,7 @@ async def estimate_analysis(body: AnalysisCreateIn, auth: Auth, db: Db, settings
 @router.post("/analyses", status_code=201)
 async def create_analysis(
     body: AnalysisCreateIn,
+    request: Request,
     response: Response,
     auth: Auth,
     db: Db,
@@ -86,7 +87,13 @@ async def create_analysis(
     if idempotency_key is not None and not svc.IDEMPOTENCY_KEY_RE.match(idempotency_key):
         raise AppError("Некорректный Idempotency-Key", code="invalid_idempotency_key")
     analysis, replayed = await svc.create_analysis(
-        db, settings, auth.user, ip=auth.ip, body=body, idempotency_key=idempotency_key
+        db,
+        settings,
+        auth.user,
+        ip=auth.ip,
+        body=body,
+        idempotency_key=idempotency_key,
+        box=request.app.state.secret_box,
     )
     if replayed:
         response.status_code = 200

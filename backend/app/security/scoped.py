@@ -24,6 +24,7 @@ from app.errors import NotFoundError
 from app.models.analyses import Analysis
 from app.models.documents import Document, DocumentVersion
 from app.models.enums import DocumentPermission, DocumentStatus
+from app.models.redaction import RedactionPreview
 from app.models.system import Export
 from app.models.users import DocumentAccess
 from app.security.policies import CONTRIBUTOR_ROLES, Actor, is_superadmin
@@ -130,6 +131,31 @@ async def get_export_for(session: AsyncSession, actor: Actor, export_id: uuid.UU
     if export is None:
         raise NotFoundError("Экспорт не найден", code="export_not_found")
     return export
+
+
+async def get_redaction_preview_for(
+    session: AsyncSession, actor: Actor, preview_id: uuid.UUID, *, for_update: bool = False
+) -> RedactionPreview:
+    """Предпросмотр маскировки — только его автору и только при праве анализа документа.
+
+    Найденные значения видит только автор: Superadmin и другие пользователи с доступом к документу
+    чужой предпросмотр не получают (404).
+    """
+    stmt = (
+        select(RedactionPreview)
+        .join(Document, Document.id == RedactionPreview.document_id)
+        .where(
+            RedactionPreview.id == preview_id,
+            RedactionPreview.created_by_id == actor.id,
+            document_access_clause(actor, DocumentAction.analyze),
+        )
+    )
+    if for_update:
+        stmt = stmt.with_for_update(of=RedactionPreview)
+    preview = (await session.execute(stmt)).scalar_one_or_none()
+    if preview is None:
+        raise NotFoundError("Предпросмотр маскировки не найден", code="redaction_preview_not_found")
+    return preview
 
 
 async def is_superadmin_override(session: AsyncSession, actor: Actor, document: Document) -> bool:

@@ -43,10 +43,17 @@
 | openpyxl / et-xmlfile | 3.1.5 / 2.0.0 | MIT | экспорт XLSX |
 | Pillow (зависимость reportlab и python-docx) | 13.0.0 | MIT-CMU (HPND) | |
 | Шрифты DejaVu Sans (`backend/app/exports/fonts/`, взяты из пакета matplotlib 3.11.2) | 2.35 | Bitstream Vera License + public domain (`LICENSE_DEJAVU`) | встраиваются в PDF-отчёт; лицензия разрешает распространение и встраивание |
+| natasha (модели NER `slovnet_ner_news_v1`, эмбеддинги `navec_news_v1`), slovnet, navec, razdel, yargy, ipymarkup | 1.6.0 / 0.6.0 / 0.10.0 / 0.5.0 / 0.16.0 / 0.9.0 | MIT | маскировка (этап 10): из `natasha` используются только файлы моделей (пакет не импортируется) |
+| pymorphy3 + pymorphy3-dicts-ru | 2.0.6 / 2.4.417150 | MIT (по метаданным пакетов) | морфология ФИО и словаря. Словари собраны из данных OpenCorpora — их собственная лицензия (по сведениям проекта — CC BY-SA) в рамках этапа не проверялась; для внутреннего использования без распространения ограничений не создаёт, при поставке третьим лицам — проверить |
+| pymorphy2 + pymorphy2-dicts-ru, docopt, DAWG-Python, DAWG2-Python | 0.9.1 / 2.4.417127 / 0.6.2 / 0.7.2 / 0.9.0 | MIT | транзитивные зависимости natasha/pymorphy3; pymorphy2 не используется (словари — как у pymorphy3) |
+| intervaltree (зависимость ipymarkup) | 3.2.1 | Apache-2.0 | транзитивная, не используется |
+| numpy | 2.5.4 | BSD-3-Clause (+ включённые компоненты 0BSD, MIT, Zlib, CC0) | зависимость navec/slovnet |
+| google-re2 | 1.1.20251105 | BSD-3-Clause | пользовательские шаблоны маскировки (линейное время) |
+| phonenumberslite | 9.0.41 | Apache-2.0 | распознавание телефонов |
 | React, React Router, TanStack Query, Zod, React Hook Form | — | MIT | |
 | PostgreSQL (образ `postgres:17-alpine`) | 17 | PostgreSQL License | |
 | nginx (образ `nginx-unprivileged`) | — | BSD-2-Clause | |
-| certifi (зависимость httpx) | 2026.7.22 | MPL-2.0 | используется без изменений (набор корневых сертификатов) |
+| certifi (зависимость httpx) | 2026.10.19 | MPL-2.0 | используется без изменений (набор корневых сертификатов); не ниже 2026.10.19 — PYSEC-2026-4320 |
 | Playwright (`@playwright/test`, `playwright-core`) — только разработка | 1.63.0 | Apache-2.0 | e2e-тесты, в образы не входит |
 | axe-core, `@axe-core/playwright` — только разработка | 4.13.0 | MPL-2.0 | аудит доступности в e2e, в образы не входит |
 

@@ -44,6 +44,8 @@ EXPECTED_TABLES = {
     "config_revisions",
     "worker_heartbeats",
     "backup_runs",
+    "redaction_previews",
+    "analysis_redactions",
     "alembic_version",
 }
 

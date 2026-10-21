@@ -20,6 +20,7 @@ import { type ModelChoice, ModelSelect } from '../../components/ModelSelect'
 import { Button, inputClass, Notice, PageTitle } from '../../components/ui'
 import { ru } from '../../i18n/ru'
 import { formatDateTime } from '../../lib/format'
+import { RedactionPreview } from './RedactionPreview'
 
 const t = ru.analyses.form
 const PARTIES: Party[] = ['party_a', 'party_b', 'named', 'unknown']
@@ -59,6 +60,8 @@ export function NewAnalysisPage() {
   const [model, setModel] = useState<ModelChoice | null>(null)
   const [estimate, setEstimate] = useState<Estimate | null>(null)
   const [errors, setErrors] = useState<string[]>([])
+  // Облачная модель: после параметров — обязательный шаг предпросмотра маскировки (этап 10).
+  const [redactionFor, setRedactionFor] = useState<AnalysisRequest | null>(null)
   // Один ключ на форму: повторное нажатие или повтор после обрыва связи не создаст второй анализ.
   const idempotencyKey = useRef(crypto.randomUUID().replaceAll('-', ''))
 
@@ -82,6 +85,8 @@ export function NewAnalysisPage() {
     [documents.data],
   )
   const versions = (document.data?.versions ?? []).filter((v) => v.extraction_status === 'ready')
+  const effectiveVersionId = versionId || document.data?.current_version_id || ''
+  const isCloud = Boolean(selectedModel?.is_cloud)
 
   const request = (): AnalysisRequest | null => {
     const problems: string[] = []
@@ -117,7 +122,32 @@ export function NewAnalysisPage() {
   const onSubmit = (e: FormEvent) => {
     e.preventDefault()
     const body = request()
-    if (body) submit.mutate(body)
+    if (!body) return
+    if (isCloud) {
+      submit.reset()
+      setRedactionFor(body)
+    } else {
+      submit.mutate(body)
+    }
+  }
+
+  if (redactionFor && selectedModel && effectiveVersionId) {
+    return (
+      <section aria-labelledby="new-analysis-title" className="space-y-4">
+        <PageTitle id="new-analysis-title">{t.title}</PageTitle>
+        <RedactionPreview
+          documentId={redactionFor.document_id}
+          versionId={effectiveVersionId}
+          model={selectedModel}
+          submitting={submit.isPending}
+          submitError={submit.error}
+          onBack={() => setRedactionFor(null)}
+          onConfirmed={(previewId) =>
+            submit.mutate({ ...redactionFor, version_id: effectiveVersionId, redaction_preview_id: previewId })
+          }
+        />
+      </section>
+    )
   }
 
   const toggle = (c: Category) => {
@@ -291,6 +321,7 @@ export function NewAnalysisPage() {
         {estimateMutation.isError && <ErrorNotice error={estimateMutation.error} />}
         {submit.isError && <ErrorNotice error={submit.error} />}
         {selectedModel?.is_cloud && model?.cloudConsent && <Notice tone="warning">{t.cloudTransfer}</Notice>}
+        {isCloud && <p className="text-sm text-slate-700">{t.redactionHint}</p>}
 
         <div className="flex flex-wrap gap-2">
           <Button
@@ -307,7 +338,7 @@ export function NewAnalysisPage() {
             variant="primary"
             disabled={submit.isPending || (estimate !== null && !estimate.within_limit)}
           >
-            {submit.isPending ? t.submitting : t.submit}
+            {submit.isPending ? t.submitting : isCloud ? t.checkRedaction : t.submit}
           </Button>
         </div>
       </form>
