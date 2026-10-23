@@ -31,6 +31,7 @@ export function Layout() {
     { to: '/analyses', label: ru.nav.analyses, show: true },
     { to: '/admin/users', label: ru.nav.users, show: me.capabilities.manage_users },
     { to: '/admin/models', label: ru.nav.models, show: me.capabilities.manage_models },
+    { to: '/admin/risk-rules', label: ru.nav.riskRules, show: me.capabilities.manage_risk_rules },
     { to: '/admin/settings', label: ru.nav.settings, show: me.capabilities.manage_models },
     { to: '/admin/audit', label: ru.nav.audit, show: me.capabilities.view_audit_log },
     { to: '/account', label: ru.nav.account, show: true },

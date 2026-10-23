@@ -114,7 +114,7 @@ const llmSettingsSchema = z.object({
 })
 export type LlmSettings = z.infer<typeof llmSettingsSchema>
 
-const revisionSchema = z.object({
+export const revisionSchema = z.object({
   id: z.string(),
   entity_type: z.string(),
   entity_id: z.string(),

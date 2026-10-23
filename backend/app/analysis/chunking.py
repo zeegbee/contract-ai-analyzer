@@ -69,9 +69,12 @@ def estimate_tokens(chars: int) -> int:
     return math.ceil(chars / CHARS_PER_TOKEN)
 
 
-def text_budget_tokens(context_window: int | None, max_output_tokens: int, depth: AnalysisDepth) -> int:
+def text_budget_tokens(
+    context_window: int | None, max_output_tokens: int, depth: AnalysisDepth, extra_prompt_tokens: int = 0
+) -> int:
+    """Бюджет текста договора на чанк; `extra_prompt_tokens` — блок правил организации (этап 11)."""
     context = context_window or DEFAULT_CONTEXT_TOKENS
-    available = context - PROMPT_RESERVE_TOKENS - max_output_tokens
+    available = context - PROMPT_RESERVE_TOKENS - extra_prompt_tokens - max_output_tokens
     if available < MIN_TEXT_BUDGET_TOKENS:
         raise ContextTooSmall(f"context={context}, output={max_output_tokens}, available={available}")
     return min(available, DEPTH_TEXT_CAP_TOKENS[depth])

@@ -6,6 +6,11 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from app.llm.base import Usage
+
 
 class ProviderError(Exception):
     code = "provider_error"
@@ -66,6 +71,12 @@ class ContextTooLong(ProviderError):
 class InvalidModelOutput(ProviderError):
     code = "invalid_model_output"
     message = "Модель вернула ответ, не соответствующий ожидаемому формату"
+    # Расход вызова (если провайдер его сообщил): ответ отклонён, но токены оплачены — учитываются в анализе.
+    usage: Usage | None = None
+
+    def with_usage(self, usage: Usage | None) -> InvalidModelOutput:
+        self.usage = usage
+        return self
 
 
 class ProviderRequestRejected(ProviderError):

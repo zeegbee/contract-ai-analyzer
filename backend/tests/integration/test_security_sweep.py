@@ -45,6 +45,7 @@ SELF_ROUTES = {
     ("GET", "/api/models/available"),
     ("POST", "/api/models/{model_id}/cloud-consent"),
     ("GET", "/api/redaction/config"),
+    ("GET", "/api/risk-rules/available"),
 }
 OBJECT_PARAMS = ("document_id", "version_id", "analysis_id", "export_id", "preview_id")
 MUTATING = {"POST", "PUT", "PATCH", "DELETE"}

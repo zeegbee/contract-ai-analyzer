@@ -40,6 +40,19 @@ export function SettingsPage() {
         </Link>
       </section>
 
+      <section
+        aria-labelledby="risk-rules-link-title"
+        className="space-y-2 rounded-lg border border-slate-300 bg-white shadow-sm p-4 text-sm"
+      >
+        <h2 id="risk-rules-link-title" className="text-lg font-semibold">
+          {ru.riskRules.title}
+        </h2>
+        <p className="text-slate-700">{ru.riskRules.settingsHint}</p>
+        <Link to="/admin/risk-rules" className="text-blue-800 underline">
+          {ru.riskRules.settingsLink}
+        </Link>
+      </section>
+
       <RedactionSection />
 
       <RetentionSection />

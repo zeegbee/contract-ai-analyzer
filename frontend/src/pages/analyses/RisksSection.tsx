@@ -16,7 +16,11 @@ import { RiskCard } from './RiskCard'
 
 const t = ru.analyses.risks
 
+// Значение фильтра «без правила» (код правила не может так называться: коды — RR-…).
+const NO_RULE = '__none__'
+
 interface Filters {
+  rule: string
   severity: string
   category: string
   party: string
@@ -25,7 +29,7 @@ interface Filters {
   showRejected: boolean
 }
 
-const EMPTY: Filters = { severity: '', category: '', party: '', validation: '', kind: '', showRejected: false }
+const EMPTY: Filters = { rule: '', severity: '', category: '', party: '', validation: '', kind: '', showRejected: false }
 
 function matches(risk: Risk, f: Filters): boolean {
   if (!f.showRejected && !f.validation && risk.validation_status === 'rejected') return false
@@ -34,6 +38,8 @@ function matches(risk: Risk, f: Filters): boolean {
   if (f.party && risk.affected_party !== f.party) return false
   if (f.validation && risk.validation_status !== f.validation) return false
   if (f.kind && risk.kind !== f.kind) return false
+  if (f.rule === NO_RULE && risk.rule_code) return false
+  if (f.rule && f.rule !== NO_RULE && risk.rule_code !== f.rule) return false
   return true
 }
 
@@ -66,7 +72,15 @@ function Select({
   )
 }
 
-export function RisksSection({ analysisId, documentId }: { analysisId: string; documentId: string }) {
+export function RisksSection({
+  analysisId,
+  documentId,
+  rules = [],
+}: {
+  analysisId: string
+  documentId: string
+  rules?: { code: string; title: string }[]
+}) {
   const [filters, setFilters] = useState<Filters>(EMPTY)
   const query = useQuery({
     queryKey: [...ANALYSES_KEY, analysisId, 'risks'],
@@ -77,6 +91,13 @@ export function RisksSection({ analysisId, documentId }: { analysisId: string; d
   const visible = risks.filter((r) => matches(r, filters))
   const rejected = risks.filter((r) => r.validation_status === 'rejected').length
   const set = (patch: Partial<Filters>) => setFilters((f) => ({ ...f, ...patch }))
+  const ruleTitles = useMemo(() => Object.fromEntries(rules.map((r) => [r.code, r.title])), [rules])
+  const ruleOptions = useMemo((): [string, string][] => {
+    const codes = [...new Set([...rules.map((r) => r.code), ...risks.flatMap((r) => (r.rule_code ? [r.rule_code] : []))])]
+    return codes.length === 0
+      ? []
+      : [[NO_RULE, t.noRule], ...codes.map((c): [string, string] => [c, ruleTitles[c] ? `${c} · ${ruleTitles[c]}` : c])]
+  }, [rules, risks, ruleTitles])
 
   if (query.isPending) return <p aria-live="polite">{ru.common.loading}</p>
   if (query.isError) return <ErrorNotice error={query.error} onRetry={() => void query.refetch()} />
@@ -90,7 +111,9 @@ export function RisksSection({ analysisId, documentId }: { analysisId: string; d
         <p className="text-sm text-slate-700">{t.none}</p>
       ) : (
         <>
-          <fieldset className="grid gap-3 rounded-lg border border-slate-300 bg-white shadow-sm p-3 sm:grid-cols-2 lg:grid-cols-5">
+          <fieldset
+            className={`grid gap-3 rounded-lg border border-slate-300 bg-white shadow-sm p-3 sm:grid-cols-2 ${ruleOptions.length > 0 ? 'lg:grid-cols-6' : 'lg:grid-cols-5'}`}
+          >
             <legend className="px-1 text-sm font-medium">{t.filters}</legend>
             <Select
               label={t.severity}
@@ -124,7 +147,10 @@ export function RisksSection({ analysisId, documentId }: { analysisId: string; d
               onChange={(v) => set({ kind: v })}
               options={Object.entries(t.kinds)}
             />
-            <div className="flex flex-wrap items-center gap-3 sm:col-span-2 lg:col-span-5">
+            {ruleOptions.length > 0 && (
+              <Select label={t.ruleFilter} value={filters.rule} onChange={(v) => set({ rule: v })} options={ruleOptions} />
+            )}
+            <div className="flex flex-wrap items-center gap-3 sm:col-span-2 lg:col-span-full">
               <label className="flex items-center gap-2 text-sm">
                 <input
                   type="checkbox"
@@ -144,7 +170,7 @@ export function RisksSection({ analysisId, documentId }: { analysisId: string; d
           ) : (
             <div className="space-y-4">
               {visible.map((r) => (
-                <RiskCard key={r.id} risk={r} documentId={documentId} />
+                <RiskCard key={r.id} risk={r} documentId={documentId} ruleTitles={ruleTitles} />
               ))}
             </div>
           )}

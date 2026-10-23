@@ -114,6 +114,8 @@ class ReportRisk:
     evidence: list[ReportEvidence] = field(default_factory=list)
     search_scope: dict[str, Any] | None = None
     legal_reference: bool = False
+    # «RR-003 · название» — правило организации из snapshot анализа (этап 11).
+    rule: str | None = None
 
 
 @dataclass
@@ -138,6 +140,8 @@ class Report:
     disclaimer: str
     risks: list[ReportRisk]
     rejected: list[ReportRisk]
+    # Применённые правила организации: «RR-003 · название (категория; ред. N)».
+    rules: list[str] = field(default_factory=list)
 
     @property
     def all_risks(self) -> list[ReportRisk]:
@@ -208,6 +212,18 @@ def _coverage_lines(coverage: dict[str, Any] | None) -> list[str]:
     return lines
 
 
+def _rule_labels(snapshot: dict[str, Any]) -> tuple[dict[str, str], list[str]]:
+    """Правила из snapshot: код → «код · название» для рисков и строки списка применённых правил."""
+    labels: dict[str, str] = {}
+    lines: list[str] = []
+    for r in snapshot.get("risk_rules") or []:
+        label = f"{r['code']} · {r['title']}"
+        labels[r["code"]] = label
+        revision = f"; ред. {r['revision']}" if r.get("revision") else ""
+        lines.append(f"{label} ({category_label(r['category'])}{revision})")
+    return labels, lines
+
+
 async def build_report(db: AsyncSession, analysis_id: uuid.UUID) -> Report:
     analysis = (await db.execute(select(Analysis).where(Analysis.id == analysis_id))).scalar_one()
     document = (await db.execute(select(Document).where(Document.id == analysis.document_id))).scalar_one()
@@ -250,6 +266,7 @@ async def build_report(db: AsyncSession, analysis_id: uuid.UUID) -> Report:
     else:
         page_note = "Страницы DOCX/DOC приблизительны (по разметке Word или LibreOffice)."
 
+    rule_labels, rule_lines = _rule_labels(analysis.config_snapshot or {})
     report_risks: list[ReportRisk] = []
     rejected: list[ReportRisk] = []
     for r in risks:
@@ -285,6 +302,7 @@ async def build_report(db: AsyncSession, analysis_id: uuid.UUID) -> Report:
             ],
             search_scope=r.search_scope,
             legal_reference=bool((r.validation_notes or {}).get("legal_reference_unverified")),
+            rule=rule_labels.get(r.rule_code, r.rule_code) if r.rule_code else None,
         )
         (rejected if r.validation_status is ValidationStatus.rejected else report_risks).append(item)
 
@@ -323,4 +341,5 @@ async def build_report(db: AsyncSession, analysis_id: uuid.UUID) -> Report:
         disclaimer=str(summary.get("disclaimer", "")),
         risks=report_risks,
         rejected=rejected,
+        rules=rule_lines,
     )

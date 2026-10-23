@@ -15,6 +15,7 @@ import {
 } from '../../api/analyses'
 import { AVAILABLE_MODELS_KEY, fetchAvailableModels } from '../../api/catalog'
 import { DOCUMENTS_KEY, fetchDocument, fetchDocuments } from '../../api/documents'
+import { AVAILABLE_RULES_KEY, type AvailableRule, fetchAvailableRules } from '../../api/riskRules'
 import { ErrorNotice } from '../../components/ErrorNotice'
 import { type ModelChoice, ModelSelect } from '../../components/ModelSelect'
 import { Button, inputClass, Notice, groupCardClass, PageTitle } from '../../components/ui'
@@ -27,7 +28,11 @@ const PARTIES: Party[] = ['party_a', 'party_b', 'named', 'unknown']
 const DEPTHS: Depth[] = ['quick', 'standard', 'deep']
 const number = new Intl.NumberFormat('ru-RU')
 
+// Предупреждение, если правила организации увеличивают оценку объёма больше чем на 25 %.
+const RULES_EXTRA_WARNING_SHARE = 0.25
+
 function EstimateView({ estimate }: { estimate: Estimate }) {
+  const base = estimate.estimated_tokens - estimate.rules_extra_tokens
   return (
     <div className="space-y-1 rounded-md border border-slate-200 bg-slate-50 p-3 text-sm" aria-live="polite">
       <p className="font-medium">{t.estimateTitle}</p>
@@ -39,6 +44,14 @@ function EstimateView({ estimate }: { estimate: Estimate }) {
         {t.cost}:{' '}
         {estimate.estimated_cost ? `≈ ${estimate.estimated_cost} ${estimate.cost_currency ?? ''}` : t.costUnknown}
       </p>
+      {estimate.rules_extra_tokens > 0 && (
+        <p>
+          {t.rulesExtra}: {number.format(estimate.rules_extra_tokens)}
+        </p>
+      )}
+      {base > 0 && estimate.rules_extra_tokens / base > RULES_EXTRA_WARNING_SHARE && (
+        <p className="text-amber-900">{t.rulesExtraWarning}</p>
+      )}
       <p className="text-xs text-slate-600">{estimate.note}</p>
       {!estimate.within_limit && <p className="text-red-800">{t.overLimit}</p>}
       {estimate.cloud_transfer && <p className="text-amber-900">{t.cloudTransfer}</p>}
@@ -56,6 +69,8 @@ export function NewAnalysisPage() {
   const [party, setParty] = useState<Party>('party_a')
   const [partyName, setPartyName] = useState('')
   const [categories, setCategories] = useState<Set<Category>>(new Set(CATEGORIES))
+  // Явный выбор пользователя по правилам; без него действует «отмечено по умолчанию» из правила.
+  const [ruleChoice, setRuleChoice] = useState<Record<string, boolean>>({})
   const [depth, setDepth] = useState<Depth>('standard')
   const [model, setModel] = useState<ModelChoice | null>(null)
   const [estimate, setEstimate] = useState<Estimate | null>(null)
@@ -75,6 +90,17 @@ export function NewAnalysisPage() {
     enabled: Boolean(documentId),
   })
   const available = useQuery({ queryKey: AVAILABLE_MODELS_KEY, queryFn: ({ signal }) => fetchAvailableModels(signal) })
+  const rules = useQuery({ queryKey: AVAILABLE_RULES_KEY, queryFn: ({ signal }) => fetchAvailableRules(signal) })
+  const rulesByCategory = useMemo(() => {
+    const map = new Map<Category, AvailableRule[]>()
+    for (const r of rules.data?.items ?? []) map.set(r.category, [...(map.get(r.category) ?? []), r])
+    return map
+  }, [rules.data])
+  // Правило применяется только вместе со своей категорией.
+  const ruleSelected = (r: AvailableRule) => categories.has(r.category) && (ruleChoice[r.id] ?? r.default_selected)
+  const selectedRules = (rules.data?.items ?? []).filter(ruleSelected)
+  const rulesLimit = rules.data?.limits.per_analysis ?? 0
+  const rulesOverLimit = rules.isSuccess && selectedRules.length > rulesLimit
   const selectedModel = available.data?.items.find((m) => m.id === model?.modelId) ?? null
 
   const candidates = useMemo(
@@ -95,6 +121,7 @@ export function NewAnalysisPage() {
     if (party === 'named' && !partyName.trim()) problems.push(t.required.partyName)
     if (!model) problems.push(t.required.model)
     if (selectedModel?.is_cloud && !model?.cloudConsent) problems.push(t.required.consent)
+    if (rulesOverLimit) problems.push(t.rulesOverLimit)
     setErrors(problems)
     if (problems.length > 0 || !model) return null
     return {
@@ -106,6 +133,8 @@ export function NewAnalysisPage() {
       depth,
       model_id: model.modelId,
       cloud_consent: model.cloudConsent,
+      // Без выбранных правил поле не передаётся (запрос — как до этапа 11).
+      rule_ids: selectedRules.length > 0 ? selectedRules.map((r) => r.id) : undefined,
     }
   }
 
@@ -157,6 +186,15 @@ export function NewAnalysisPage() {
       else next.add(c)
       return next
     })
+    resetEstimate()
+  }
+  const toggleRule = (r: AvailableRule) => {
+    setRuleChoice((prev) => ({ ...prev, [r.id]: !ruleSelected(r) }))
+    resetEstimate()
+  }
+  const setAll = (selected: boolean) => {
+    setCategories(new Set(selected ? CATEGORIES : []))
+    setRuleChoice(Object.fromEntries((rules.data?.items ?? []).map((r) => [r.id, selected])))
     resetEstimate()
   }
 
@@ -249,31 +287,53 @@ export function NewAnalysisPage() {
         <fieldset className={`space-y-2 ${groupCardClass}`}>
           <legend className="text-sm font-semibold">{t.categories}</legend>
           <div className="flex gap-2">
-            <Button
-              onClick={() => {
-                setCategories(new Set(CATEGORIES))
-                resetEstimate()
-              }}
-            >
-              {t.selectAll}
-            </Button>
-            <Button
-              onClick={() => {
-                setCategories(new Set())
-                resetEstimate()
-              }}
-            >
-              {t.clearAll}
-            </Button>
+            <Button onClick={() => setAll(true)}>{t.selectAll}</Button>
+            <Button onClick={() => setAll(false)}>{t.clearAll}</Button>
           </div>
-          <div className="grid gap-1 sm:grid-cols-2">
+          {rulesByCategory.size > 0 && <p className="text-xs text-slate-600">{t.rulesHint}</p>}
+          <div className="grid items-start gap-x-4 gap-y-1 sm:grid-cols-2">
             {CATEGORIES.map((c) => (
-              <label key={c} className="flex items-center gap-2 text-sm">
-                <input type="checkbox" checked={categories.has(c)} onChange={() => toggle(c)} />
-                {ru.analyses.categories[c]}
-              </label>
+              <div key={c}>
+                <label className="flex items-center gap-2 text-sm">
+                  <input type="checkbox" checked={categories.has(c)} onChange={() => toggle(c)} />
+                  {ru.analyses.categories[c]}
+                </label>
+                {(rulesByCategory.get(c) ?? []).length > 0 && (
+                  <ul aria-label={`${t.rulesTitle}: ${ru.analyses.categories[c]}`} className="mt-1 mb-2 space-y-1 pl-6">
+                    {(rulesByCategory.get(c) ?? []).map((r) => (
+                      <li key={r.id}>
+                        <label
+                          className={`flex items-start gap-2 text-sm ${categories.has(c) ? '' : 'text-slate-400'}`}
+                          title={r.description}
+                        >
+                          <input
+                            type="checkbox"
+                            className="mt-1"
+                            checked={ruleSelected(r)}
+                            disabled={!categories.has(c)}
+                            onChange={() => toggleRule(r)}
+                          />
+                          <span>
+                            <span className="font-mono text-xs">{r.code}</span> {r.title}
+                            <span className="block text-xs text-slate-500">
+                              {t.ruleKinds[r.kind]} · <span className="line-clamp-2 inline">{r.description}</span>
+                            </span>
+                          </span>
+                        </label>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
             ))}
           </div>
+          {rules.isError && <p className="text-sm text-amber-900">{t.rulesLoadError}</p>}
+          {rulesByCategory.size > 0 && (
+            <p className={`text-sm ${rulesOverLimit ? 'text-red-800' : 'text-slate-700'}`} aria-live="polite">
+              {t.rulesSelected}: {selectedRules.length} {t.rulesOf} {rulesLimit}
+              {rulesOverLimit && ` — ${t.rulesOverLimit}`}
+            </p>
+          )}
         </fieldset>
 
         <fieldset className={`space-y-2 ${groupCardClass}`}>
@@ -336,7 +396,7 @@ export function NewAnalysisPage() {
           <Button
             type="submit"
             variant="primary"
-            disabled={submit.isPending || (estimate !== null && !estimate.within_limit)}
+            disabled={submit.isPending || rulesOverLimit || (estimate !== null && !estimate.within_limit)}
           >
             {submit.isPending ? t.submitting : isCloud ? t.checkRedaction : t.submit}
           </Button>

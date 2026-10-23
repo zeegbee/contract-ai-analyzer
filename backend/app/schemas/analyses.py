@@ -42,6 +42,8 @@ class AnalysisCreateIn(BaseModel):
     cloud_consent: bool = False
     # Подтверждённый предпросмотр маскировки — обязателен для облачной модели (этап 10).
     redaction_preview_id: uuid.UUID | None = None
+    # Правила рисков организации (этап 11); лимит на анализ проверяет сервис (понятная ошибка 422).
+    rule_ids: Annotated[list[uuid.UUID], Field(max_length=200)] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _check(self) -> AnalysisCreateIn:
@@ -72,6 +74,8 @@ class EstimateOut(BaseModel):
     cost_currency: str | None
     pricing_source: str | None
     cloud_transfer: bool
+    # Часть оценки, добавленная блоком правил организации (этап 11).
+    rules_extra_tokens: int = 0
     note: str = (
         "Оценка по длине текста (≈3 символа на токен) с верхней границей ответа модели; фактический "
         "расход зависит от модели и ответа."
@@ -179,6 +183,8 @@ class RiskOut(BaseModel):
     validation_notes: dict[str, Any]
     search_scope: dict[str, Any] | None
     dedup_group: str | None
+    # Код правила организации (этап 11); текст правила — в config_snapshot.risk_rules анализа.
+    rule_code: str | None = None
     evidence: list[EvidenceOut]
 
 

@@ -71,6 +71,13 @@ class AuditAction(StrEnum):
     redaction_unmasked_disallowed = "redaction.unmasked_disallowed"
     redaction_preview_confirmed = "redaction.preview_confirmed"
     redaction_sent_unmasked = "redaction.sent_unmasked"
+    # Правила рисков организации (этап 11); в details — код правила и имена полей, без текста
+    risk_rule_created = "risk_rule.created"
+    risk_rule_updated = "risk_rule.updated"
+    risk_rule_enabled = "risk_rule.enabled"
+    risk_rule_disabled = "risk_rule.disabled"
+    risk_rule_archived = "risk_rule.archived"
+    risk_rule_restored = "risk_rule.restored"
     # Резервное копирование (этап 08A)
     backup_requested = "backup.requested"
     backup_completed = "backup.completed"

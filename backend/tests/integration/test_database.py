@@ -45,6 +45,7 @@ EXPECTED_TABLES = {
     "worker_heartbeats",
     "backup_runs",
     "redaction_previews",
+    "risk_rules",
     "analysis_redactions",
     "alembic_version",
 }

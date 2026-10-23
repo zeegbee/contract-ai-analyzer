@@ -9,6 +9,8 @@
 Сходство — коэффициент Жаккара по основам слов (первые 5 букв, без регистра и пунктуации).
 При объединении сохраняются все доказательства и источники, severity — максимальная,
 уверенность модели — максимальная; основной текст берётся у самого серьёзного риска.
+Код правила организации (этап 11) — у основного риска, а если у него нет — у самого серьёзного из
+сливаемых; остальные коды сохраняются в `merged_rules`.
 """
 
 from __future__ import annotations
@@ -39,6 +41,8 @@ class Candidate:
     sources: set[str]
     # Фрагменты (seq), которые модель видела в запросах-источниках — для проверки доказательств.
     scope_seqs: set[int]
+    # Модель указала код правила, которого нет в анализе (код уже снят с риска).
+    rule_code_unknown: bool = False
 
 
 @dataclass
@@ -49,6 +53,9 @@ class MergedRisk:
     scope_seqs: set[int]
     merged_count: int = 1
     severities: list[RiskSeverity] = field(default_factory=list)
+    # Коды правил сливаемых рисков, кроме выбранного (этап 11).
+    merged_rules: list[str] = field(default_factory=list)
+    rule_code_unknown: bool = False
 
 
 def _stems(title: str) -> set[str]:
@@ -126,8 +133,13 @@ def deduplicate(candidates: Sequence[Candidate]) -> list[MergedRisk]:
             key=lambda c: (SEVERITY_RANK[c.risk.severity], c.risk.model_confidence, len(c.risk.description)),
         )
         evidence = _merge_evidence([main, *[m for m in members if m is not main]])
+        ranked = sorted(members, key=lambda c: (c is not main, -SEVERITY_RANK[c.risk.severity]))
+        codes = list(dict.fromkeys(c.risk.rule_code for c in ranked if c.risk.rule_code))
         risk = main.risk.model_copy(
-            update={"model_confidence": max(m.risk.model_confidence for m in members)}
+            update={
+                "model_confidence": max(m.risk.model_confidence for m in members),
+                "rule_code": codes[0] if codes else None,
+            }
         )
         merged.append(
             MergedRisk(
@@ -137,6 +149,8 @@ def deduplicate(candidates: Sequence[Candidate]) -> list[MergedRisk]:
                 scope_seqs=set().union(*(m.scope_seqs for m in members)),
                 merged_count=len(members),
                 severities=[m.risk.severity for m in members],
+                merged_rules=codes[1:],
+                rule_code_unknown=any(m.rule_code_unknown for m in members),
             )
         )
     return merged

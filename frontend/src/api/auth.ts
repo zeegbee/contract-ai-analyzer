@@ -16,6 +16,8 @@ export const meSchema = z.object({
     view_audit_log: z.boolean(),
     upload_documents: z.boolean(),
     manage_models: z.boolean(),
+    // Отсутствует у сервера до этапа 11 — считаем «нет прав».
+    manage_risk_rules: z.boolean().optional().default(false),
     manage_providers: z.boolean(),
     manage_llm_settings: z.boolean(),
     assignable_roles: z.array(roleSchema),

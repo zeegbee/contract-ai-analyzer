@@ -1,7 +1,8 @@
 /**
  * Сквозной сценарий на чистом стенде (e2e/run.sh):
  * bootstrap → вход → обязательная смена пароля → провайдер и модель (mock-сервер с API Ollama) →
- * загрузка PDF → извлечение текста → анализ → серверная проверка доказательств → экспорт.
+ * загрузка PDF → извлечение текста → правило рисков организации → анализ → серверная проверка
+ * доказательств → экспорт.
  * Попутно: заголовки безопасности, аудит доступности (axe), отсутствие текста договора в аудите.
  */
 import { readFileSync } from 'node:fs'
@@ -16,6 +17,7 @@ const UNILATERAL = 'Одностороннее изменение цены'
 const PENALTY = 'Высокая неустойка'
 const FABRICATED = 'Удержание оплаты'
 const MISSING = 'Не определён порядок приёмки'
+const RULE_TITLE = 'Неустойка выше 0,1 % в день'
 
 interface Evidence {
   quote: string
@@ -29,6 +31,7 @@ interface Evidence {
 interface Risk {
   title: string
   kind: string
+  rule_code?: string | null
   validation_status: string
   evidence: Evidence[]
 }
@@ -157,9 +160,29 @@ test('полный сценарий: от bootstrap до экспорта', asyn
   expect(preview.ner_available).toBe(true)
   expect(preview.entities.map((e) => e.canonical)).toEqual(expect.arrayContaining(['Альфа Трейд', 'Бета Ритейл']))
 
+  // --- правило рисков организации (этап 11) через страницу «Правила»
+  await page.getByRole('link', { name: 'Правила', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Правила рисков организации' })).toBeVisible()
+  await page.getByRole('button', { name: 'Новое правило' }).click()
+  const ruleDialog = page.getByRole('dialog', { name: 'Новое правило' })
+  await ruleDialog.getByLabel('Название').fill(RULE_TITLE)
+  await ruleDialog.getByLabel('Категория').selectOption('penalties')
+  await ruleDialog.getByLabel('Что считать риском').fill('Неустойка покупателя больше 0,1 % от суммы за каждый день')
+  await ruleDialog.getByLabel('Рекомендуемый уровень').selectOption('high')
+  await expectAccessible(page, 'новое правило')
+  await ruleDialog.getByRole('button', { name: 'Сохранить' }).click()
+  await expect(page.getByText('Правило создано')).toBeVisible()
+  await expectAccessible(page, 'правила')
+  const rules = await apiGet<{ items: { code: string; title: string }[] }>(page, '/api/admin/risk-rules')
+  const ruleCode = rules.items.find((r) => r.title === RULE_TITLE)?.code ?? ''
+  expect(ruleCode).toMatch(/^RR-\d{3,}$/)
+  await page.goto(`/documents/${documentId}`)
+
   // --- новый анализ через UI
   await page.getByRole('link', { name: 'Запустить анализ' }).click()
   await expect(page.getByRole('heading', { name: 'Новый анализ' })).toBeVisible()
+  // Правило отмечено по умолчанию под своей категорией.
+  await expect(page.getByRole('checkbox', { name: new RegExp(`${ruleCode} ${RULE_TITLE}`) })).toBeChecked()
   await page.getByLabel('Модель', { exact: true }).selectOption(modelId)
   await page.getByRole('button', { name: 'Проверить модель и объём' }).click()
   await expect(page.getByText('Оценка объёма')).toBeVisible()
@@ -181,6 +204,8 @@ test('полный сценарий: от bootstrap до экспорта', asyn
   await expect(unilateral).toContainText('Цитата совпадает')
   await expect(unilateral).toContainText('стр. 1')
   await expect(page.getByRole('article', { name: PENALTY })).toContainText('Подтверждён')
+  await expect(page.getByRole('article', { name: PENALTY })).toContainText(`Правило ${ruleCode} · ${RULE_TITLE}`)
+  await expect(page.getByText('Применены правила организации: 1')).toBeVisible()
   const missing = page.getByRole('article', { name: MISSING })
   await expect(missing).toContainText('Требует проверки')
   await expect(missing).toContainText('Область поиска')
@@ -218,16 +243,30 @@ test('полный сценарий: от bootstrap до экспорта', asyn
   expect(byTitle.get(FABRICATED)?.validation_status).toBe('rejected')
   expect(byTitle.get(MISSING)?.validation_status).toBe('needs_review')
   expect(byTitle.get(MISSING)?.evidence).toEqual([])
+  expect(byTitle.get(PENALTY)?.rule_code).toBe(ruleCode)
+  expect(byTitle.get(UNILATERAL)?.rule_code ?? null).toBeNull()
 
-  // --- экспорт PDF и XLSX через UI
+  // --- экспорт PDF, XLSX и CSV через UI
   await exportAndDownload(page, 'Отчёт PDF', '%PDF')
   await exportAndDownload(page, 'Риски XLSX', 'PK')
+  // CSV для Excel начинается с BOM (U+FEFF).
+  const bom = String.fromCharCode(0xfeff)
+  const csvPath = await exportAndDownload(page, 'Риски CSV', bom)
+  const [header = '', ...rows] = readFileSync(csvPath, 'utf-8').slice(bom.length).split(/\r?\n/)
+  expect(header.split(';')).toContain('Правило')
+  expect(rows.some((row) => row.includes(`${ruleCode} · ${RULE_TITLE}`))).toBe(true)
 
   // --- аудит без текста договора
   const audit = await page.request.get('/api/admin/audit?limit=100')
   expect(audit.status()).toBe(200)
   const auditText = await audit.text()
-  for (const action of ['document.uploaded', 'analysis.started', 'export.created', 'export.downloaded']) {
+  for (const action of [
+    'document.uploaded',
+    'analysis.started',
+    'export.created',
+    'export.downloaded',
+    'risk_rule.created',
+  ]) {
     expect(auditText).toContain(action)
   }
   expect(auditText).not.toContain('вправе изменить цену')
@@ -249,14 +288,14 @@ test('полный сценарий: от bootstrap до экспорта', asyn
   })
 })
 
-async function exportAndDownload(page: Page, button: string, magic: string): Promise<void> {
+async function exportAndDownload(page: Page, button: string, magic: string): Promise<string> {
   await page.getByRole('button', { name: button }).click()
   const row = page.getByRole('listitem').filter({ hasText: button }).first()
   const link = row.getByRole('link', { name: 'Скачать' })
   await expect(link).toBeVisible({ timeout: 60_000 })
   const [download] = await Promise.all([page.waitForEvent('download'), link.click()])
   const path = await download.path()
-  const head = readFileSync(path).subarray(0, magic.length).toString('latin1')
-  expect(head, button).toBe(magic)
+  expect(readFileSync(path, 'utf-8').startsWith(magic), button).toBe(true)
   expect(download.suggestedFilename()).toMatch(/^contract-analysis-/)
+  return path
 }

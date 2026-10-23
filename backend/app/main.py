@@ -7,7 +7,19 @@ from contextlib import asynccontextmanager
 
 from fastapi import APIRouter, FastAPI
 
-from app.api import analyses, audit, auth, backup, catalog, documents, health, redaction, resources, users
+from app.api import (
+    analyses,
+    audit,
+    auth,
+    backup,
+    catalog,
+    documents,
+    health,
+    redaction,
+    resources,
+    risk_rules,
+    users,
+)
 from app.api import settings as settings_api
 from app.config import Settings, get_settings
 from app.db.session import create_engine, create_session_factory
@@ -82,16 +94,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.add_middleware(RequestContextMiddleware, hsts=settings.is_production)
 
     api = APIRouter(prefix="/api")
-    api.include_router(health.router)
-    api.include_router(auth.router)
-    api.include_router(users.router)
-    api.include_router(audit.router)
-    api.include_router(documents.router)
-    api.include_router(analyses.router)
-    api.include_router(resources.router)
-    api.include_router(catalog.router)
-    api.include_router(settings_api.router)
-    api.include_router(backup.router)
-    api.include_router(redaction.router)
+    for module in (
+        health,
+        auth,
+        users,
+        audit,
+        documents,
+        analyses,
+        resources,
+        catalog,
+        settings_api,
+        backup,
+        redaction,
+        risk_rules,
+    ):
+        api.include_router(module.router)
     app.include_router(api)
     return app

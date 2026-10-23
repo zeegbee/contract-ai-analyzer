@@ -76,7 +76,7 @@ from app.security.scoped import (
     get_version_for,
 )
 from app.security.secretbox import SecretBox
-from app.services import catalog, redaction
+from app.services import catalog, redaction, risk_rules
 from app.services.audit import AuditAction, record
 
 RUN_ANALYSIS_JOB = "run_analysis"
@@ -120,6 +120,9 @@ class Plan:
     budget_tokens: int
     max_output_tokens: int
     estimate: EstimateOut
+    # Выбранные правила организации в виде snapshot (этап 11).
+    rules: list[dict[str, Any]]
+    rules_prompt_tokens: int
 
     @property
     def cloud(self) -> bool:
@@ -150,16 +153,29 @@ def build_estimate(
     categories: list[RiskCategory],
     pricing: dict[str, Any] | None,
     cloud: bool,
+    rules_chars: tuple[int, int] = (0, 0),
 ) -> EstimateOut:
-    """Верхняя оценка токенов: все вызовы с полным лимитом ответа (фактический расход обычно меньше)."""
+    """Верхняя оценка токенов: все вызовы с полным лимитом ответа (фактический расход обычно меньше).
+
+    `rules_chars` — длина блока правил организации в промпте фрагментов и межраздельного прохода.
+    """
+    chunk_rules, cross_rules = rules_chars
     tokens_in = sum(c.est_tokens + PROMPT_RESERVE_TOKENS for c in chunks)
     tokens_out = len(chunks) * max_output_tokens
+    rules_extra = len(chunks) * estimate_tokens(chunk_rules) if chunk_rules else 0
     if depth is not AnalysisDepth.quick:
         tokens_in += estimate_tokens(_STRUCTURE_INPUT_CHARS) + PROMPT_RESERVE_TOKENS
         tokens_out += _AUX_OUTPUT_TOKENS
-    if RiskCategory.contradiction in categories or RiskCategory.missing_clause in categories:
+    cross_requested = RiskCategory.contradiction in categories or RiskCategory.missing_clause in categories
+    if cross_requested or cross_rules:
         tokens_in += budget_tokens + PROMPT_RESERVE_TOKENS
         tokens_out += max_output_tokens
+        if cross_rules:
+            rules_extra += estimate_tokens(cross_rules)
+        if not cross_requested:
+            # Межраздельный проход выполняется только ради правил «отсутствующее условие».
+            rules_extra += budget_tokens + PROMPT_RESERVE_TOKENS + max_output_tokens
+    tokens_in += rules_extra
     verifier_calls = len(chunks) * _VERIFIER_CALLS_PER_CHUNK
     tokens_in += verifier_calls * _VERIFIER_INPUT_TOKENS
     tokens_out += verifier_calls * _AUX_OUTPUT_TOKENS
@@ -176,6 +192,7 @@ def build_estimate(
         cost_currency=currency,
         pricing_source=source,
         cloud_transfer=cloud,
+        rules_extra_tokens=rules_extra,
     )
 
 
@@ -229,6 +246,7 @@ async def plan_analysis(
         for p in providers:
             if p.is_cloud:
                 await _require_cloud_notice(db, user, p)
+    rules = await risk_rules.resolve_for_analysis(db, body.rule_ids, body.categories)
 
     sizes = await fragment_sizes(db, version.id)
     if not sizes:
@@ -242,6 +260,7 @@ async def plan_analysis(
         provider=provider,
         verifier=verifier,
         sizes=list(sizes.values()),
+        rules=rules,
     )
 
 
@@ -269,10 +288,13 @@ def _plan_chunks(
     provider: ProviderConfig,
     verifier: tuple[ModelConfig, ProviderConfig] | None,
     sizes: list[FragmentSize],
+    rules: list[dict[str, Any]],
 ) -> Plan:
     max_output = model.max_output_tokens or settings.analysis_default_max_output_tokens
+    rules_chars = risk_rules.prompt_sizes(rules, body.categories)
+    rules_tokens = estimate_tokens(max(rules_chars)) if rules else 0
     try:
-        budget = text_budget_tokens(model.context_window, max_output, body.depth)
+        budget = text_budget_tokens(model.context_window, max_output, body.depth, rules_tokens)
     except ContextTooSmall:
         raise AppError(
             "Контекст модели слишком мал для анализа с текущим лимитом ответа",
@@ -290,8 +312,21 @@ def _plan_chunks(
         categories=body.categories,
         pricing=model.pricing,
         cloud=cloud,
+        rules_chars=rules_chars,
     )
-    return Plan(document, version, model, provider, verifier, chunks, budget, max_output, estimate)
+    return Plan(
+        document,
+        version,
+        model,
+        provider,
+        verifier,
+        chunks,
+        budget,
+        max_output,
+        estimate,
+        rules=rules,
+        rules_prompt_tokens=rules_tokens,
+    )
 
 
 async def replan_masked(
@@ -309,6 +344,7 @@ async def replan_masked(
         provider=plan.provider,
         verifier=plan.verifier,
         sizes=[FragmentSize(s.seq, masked[k]) for k, s in sizes.items()],
+        rules=plan.rules,
     )
 
 
@@ -332,7 +368,10 @@ def build_snapshot(settings: Settings, plan: Plan) -> dict[str, Any]:
         "overlap_share": OVERLAP_SHARE,
         "max_output_tokens": plan.max_output_tokens,
         "chunks": len(plan.chunks),
+        "rules_prompt_tokens": plan.rules_prompt_tokens,
     }
+    # Текст выбранных правил — копия на момент запуска: повтор анализа использует её же.
+    snapshot["risk_rules"] = plan.rules
     snapshot["limits"] = {
         "max_analysis_tokens": settings.analysis_max_tokens,
         "quote_retry_limit": settings.analysis_quote_retry_limit,
@@ -367,6 +406,8 @@ def same_request(analysis: Analysis, body: AnalysisCreateIn) -> bool:
         and sorted(analysis.categories) == sorted(c.value for c in body.categories)
         and analysis.depth == body.depth
         and analysis.model_config_id == body.model_id
+        and sorted(r["id"] for r in analysis.config_snapshot.get("risk_rules") or [])
+        == sorted({str(i) for i in body.rule_ids})
     )
 
 
@@ -516,6 +557,7 @@ async def create_analysis(
             "party": body.party.value,
             "depth": body.depth.value,
             "categories": len(body.categories),
+            "risk_rules": [r["code"] for r in plan.rules],
             "chunks": len(plan.chunks),
             "estimated_tokens": plan.estimate.estimated_tokens,
             "redaction": consumed.mode.value if consumed is not None else "not_applicable",
@@ -888,6 +930,7 @@ async def risk_views(
                 validation_notes=dict(r.validation_notes or {}),
                 search_scope=r.search_scope,
                 dedup_group=r.dedup_group,
+                rule_code=r.rule_code,
                 evidence=[
                     EvidenceOut(
                         id=e.id,

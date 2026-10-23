@@ -16,6 +16,7 @@ import {
   LlmPage,
   ModelPage,
   NewAnalysisPage,
+  RiskRulesPage,
   SettingsPage,
   StatusPage,
   UserDetailPage,
@@ -77,6 +78,14 @@ export const routes: RouteObject[] = [
         element: (
           <RequireCapability capability="manage_models">
             <ModelPage />
+          </RequireCapability>
+        ),
+      },
+      {
+        path: 'admin/risk-rules',
+        element: (
+          <RequireCapability capability="manage_risk_rules">
+            <RiskRulesPage />
           </RequireCapability>
         ),
       },

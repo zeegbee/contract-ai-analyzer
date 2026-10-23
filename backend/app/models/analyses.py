@@ -150,6 +150,8 @@ class AnalysisRisk(UUIDPk, Timestamps, Base):
         ARRAY(UUID(as_uuid=True)), nullable=False, server_default=text("'{}'")
     )
     dedup_group: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Код правила организации (этап 11), проверенный по snapshot анализа; текст правила — в snapshot.
+    rule_code: Mapped[str | None] = mapped_column(String(16), nullable=True)
     is_hidden_by_user: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
 
     __table_args__ = (

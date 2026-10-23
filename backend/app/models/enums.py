@@ -208,3 +208,11 @@ class RedactionMode(StrEnum):
     masked = "masked"
     # Пользователь отдельно подтвердил отправку без маскировки (разрешено настройкой `allow_unmasked`).
     unmasked_by_user = "unmasked_by_user"
+
+
+class RiskRuleKind(StrEnum):
+    """Где применяется правило рисков организации (этап 11)."""
+
+    clause_risk = "clause_risk"  # анализ фрагментов (риск в условии)
+    missing_clause = "missing_clause"  # поиск отсутствующих условий (межраздельный проход)
+    any = "any"  # оба прохода

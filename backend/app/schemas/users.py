@@ -50,6 +50,7 @@ class UserCapabilities(BaseModel):
     view_audit_log: bool
     upload_documents: bool
     manage_models: bool
+    manage_risk_rules: bool
     manage_providers: bool
     manage_llm_settings: bool
     assignable_roles: list[UserRole]

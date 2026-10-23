@@ -24,6 +24,7 @@ export function makeMe(role: Role = 'analyst', overrides: Partial<Me> = {}): Me 
       view_audit_log: isAdmin,
       upload_documents: role !== 'viewer',
       manage_models: isAdmin,
+      manage_risk_rules: isAdmin,
       manage_providers: role === 'superadmin',
       manage_llm_settings: role === 'superadmin',
       assignable_roles: ASSIGNABLE[role],

@@ -170,13 +170,19 @@ class OpenRouterProvider:
             raise ProviderUnavailable("Генерация прервана провайдером", code="generation_failed")
         message = choice.get("message")
         content = message.get("content") if isinstance(message, dict) else None
+        usage = _usage(data.get("usage"))
         if finish == "length":
-            raise InvalidModelOutput("Ответ модели обрезан по лимиту токенов", code="output_truncated")
-        parsed = parse_json_object(content)
+            raise InvalidModelOutput(
+                "Ответ модели обрезан по лимиту токенов", code="output_truncated"
+            ).with_usage(usage)
+        try:
+            parsed = parse_json_object(content)
+        except InvalidModelOutput as exc:
+            raise exc.with_usage(usage) from None
         return StructuredResult(
             parsed_json=parsed,
             raw_text_len=len(content) if isinstance(content, str) else 0,
-            usage=_usage(data.get("usage")),
+            usage=usage,
             provider_request_id=str(data["id"])[:200] if data.get("id") else None,
             finish_reason=str(finish) if finish else None,
             model=str(data["model"])[:200] if data.get("model") else None,

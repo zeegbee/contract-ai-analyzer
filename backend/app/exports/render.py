@@ -51,6 +51,7 @@ COLUMNS = [
     "Уровень",
     "Тип",
     "Категория",
+    "Правило",
     "Затрагивает",
     "Название",
     "Описание",
@@ -90,6 +91,7 @@ def _row(risk: ReportRisk) -> list[str]:
         risk.severity,
         risk.kind,
         risk.category,
+        risk.rule or "",
         risk.affected_party,
         risk.title,
         risk.description,
@@ -129,7 +131,7 @@ def render_xlsx(report: Report) -> bytes:
         c.font = Font(bold=True)
     for index, column in enumerate(ws.columns, start=1):
         letter = get_column_letter(index)
-        ws.column_dimensions[letter].width = 18 if index <= 6 else 40
+        ws.column_dimensions[letter].width = 18 if index <= 7 else 40
         for c in column:
             c.alignment = Alignment(wrap_text=True, vertical="top")
     info = wb.create_sheet("Отчёт")
@@ -141,6 +143,7 @@ def render_xlsx(report: Report) -> bytes:
             ["Сторона", report.party + (f": {report.party_name}" if report.party_name else "")],
             ["Глубина", report.depth],
             ["Категории", ", ".join(report.categories)],
+            *[["Правило организации", x] for x in report.rules],
             *[[k, v] for k, v in report.model],
             ["Сформирован", _fmt_dt(report.generated_at)],
             ["Итог", report.statement],
@@ -237,7 +240,8 @@ def _docx_risk(doc: object, risk: ReportRisk, heading: object, para: object) -> 
 
 
 def _risk_fields(risk: ReportRisk) -> list[tuple[str, str]]:
-    fields = [
+    fields = [("Правило организации", risk.rule)] if risk.rule else []
+    fields += [
         ("Описание", risk.description),
         ("Причина", risk.reason),
         ("Последствия", risk.consequences),
@@ -263,6 +267,7 @@ def _meta(report: Report) -> list[tuple[str, str]]:
         ("Сторона анализа", party),
         ("Глубина", report.depth),
         ("Категории", ", ".join(report.categories)),
+        *[("Правило организации", x) for x in report.rules],
         *report.model,
         ("Отчёт сформирован", _fmt_dt(report.generated_at)),
     ]

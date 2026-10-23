@@ -11,9 +11,10 @@
 from __future__ import annotations
 
 import copy
+from collections.abc import Sequence
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, StringConstraints
 
 from app.models.enums import AffectedParty, RelevanceStatus, RiskCategory, RiskKind, RiskSeverity
 
@@ -46,6 +47,17 @@ OptText1000 = Annotated[str | None, _optional(1000)]
 OptText3000 = Annotated[str | None, _optional(3000)]
 
 
+RULE_CODE_MAX = 64
+
+
+def _lenient_code(value: Any) -> str | None:
+    """Код правила из ответа модели: не строка или пусто → None; длина обрезается (проверка — сервером)."""
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    return value[:RULE_CODE_MAX] or None
+
+
 class _Strict(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -69,6 +81,13 @@ class RiskItem(_Strict):
     model_confidence: Annotated[float, Field(ge=0, le=1, description="Субъективная уверенность 0..1")]
     evidence: Annotated[list[EvidenceItem], Field(max_length=5)]
     search_scope: OptText1000 = Field(description="Для missing_clause: какие разделы просмотрены; иначе null")
+    # Этап 11. Значение по умолчанию — для результатов чанков, сохранённых до появления поля и для
+    # проходов без правил (поле убирается из схемы провайдера, см. `risk_list_schema`). Посторонний код
+    # не делает ответ невалидным: его снимает сервер по списку правил из snapshot анализа.
+    rule_code: Annotated[str | None, BeforeValidator(_lenient_code)] = Field(
+        default=None,
+        description="Код правила организации из <org_rules>, которому соответствует риск, или null",
+    )
 
 
 class RiskList(_Strict):
@@ -147,4 +166,23 @@ def provider_schema(model: type[BaseModel]) -> dict[str, Any]:
     raw = model.model_json_schema()
     defs = raw.pop("$defs", {})
     schema: dict[str, Any] = _resolve(raw, defs)
+    return schema
+
+
+def risk_list_schema(rule_codes: Sequence[str]) -> dict[str, Any]:
+    """Схема `RiskList` для провайдера с учётом правил организации (этап 11).
+
+    Без правил в проходе поле `rule_code` убирается (схема — как до этапа 11: иначе модель заполняет
+    его выдуманными значениями); с правилами — только коды правил прохода или null.
+    """
+    schema = provider_schema(RiskList)
+    item = schema["properties"]["risks"]["items"]
+    if not rule_codes:
+        item["properties"].pop("rule_code", None)
+        item["required"] = [name for name in item["required"] if name != "rule_code"]
+        return schema
+    item["properties"]["rule_code"] = {
+        "anyOf": [{"type": "string", "enum": list(rule_codes)}, {"type": "null"}],
+        "description": "Код правила организации из <org_rules>, которому соответствует риск, или null",
+    }
     return schema

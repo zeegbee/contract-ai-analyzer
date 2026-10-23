@@ -104,7 +104,15 @@ function reasons(risk: Risk): string[] {
   return codes.filter((c): c is string => typeof c === 'string').map((c) => t.reasons[c] ?? c)
 }
 
-export function RiskCard({ risk, documentId }: { risk: Risk; documentId: string }) {
+export function RiskCard({
+  risk,
+  documentId,
+  ruleTitles = {},
+}: {
+  risk: Risk
+  documentId: string
+  ruleTitles?: Record<string, string>
+}) {
   const headingId = useId()
   const current = risk.evidence.filter((e) => !e.superseded)
   const superseded = risk.evidence.filter((e) => e.superseded)
@@ -133,6 +141,12 @@ export function RiskCard({ risk, documentId }: { risk: Risk; documentId: string 
           <span className="rounded-full border border-slate-200 px-2 py-0.5 text-xs text-slate-700">
             {ru.analyses.categories[risk.category] ?? risk.category}
           </span>
+          {risk.rule_code && (
+            <span className="rounded-full border border-indigo-300 bg-indigo-50 px-2 py-0.5 text-xs text-indigo-900">
+              {t.rule} {risk.rule_code}
+              {ruleTitles[risk.rule_code] ? ` · ${ruleTitles[risk.rule_code]}` : ''}
+            </span>
+          )}
           <span className="text-xs text-slate-700">
             {t.party}: {t.affected[risk.affected_party]}
           </span>
@@ -166,6 +180,7 @@ export function RiskCard({ risk, documentId }: { risk: Risk; documentId: string 
         <p className="rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-950">⚠ {t.legal}</p>
       )}
       {notes.party_wording_not_neutral === true && <p className="text-xs text-amber-900">⚠ {t.wording}</p>}
+      {notes.rule_code_unknown === true && <p className="text-xs text-slate-600">{t.ruleUnknown}</p>}
 
       {isMissing && risk.search_scope && (
         <section aria-label={t.scope} className="space-y-2 rounded-md border border-amber-200 bg-amber-50/50 p-3 text-sm">
@@ -234,6 +249,11 @@ export function RiskCard({ risk, documentId }: { risk: Risk; documentId: string 
         {risk.model_confidence !== null && (
           <span>
             {t.confidence}: {risk.model_confidence.toFixed(2).replace('.', ',')} ({t.confidenceNote})
+          </span>
+        )}
+        {Array.isArray(notes.merged_rules) && notes.merged_rules.length > 0 && (
+          <span>
+            {t.mergedRules}: {notes.merged_rules.filter((c) => typeof c === 'string').join(', ')}
           </span>
         )}
         {typeof notes.merged_from === 'number' && (

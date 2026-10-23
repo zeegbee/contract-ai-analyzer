@@ -92,15 +92,20 @@ class OllamaProvider:
         message = data.get("message")
         content = message.get("content") if isinstance(message, dict) else None
         reason = data.get("done_reason")
-        if reason == "length":
-            raise InvalidModelOutput("Ответ модели обрезан по лимиту токенов", code="output_truncated")
-        parsed = parse_json_object(content)
         prompt, completion = _count(data.get("prompt_eval_count")), _count(data.get("eval_count"))
         usage = Usage(
             prompt_tokens=prompt,
             completion_tokens=completion,
             total_tokens=prompt + completion if prompt is not None and completion is not None else None,
         )
+        if reason == "length":
+            raise InvalidModelOutput(
+                "Ответ модели обрезан по лимиту токенов", code="output_truncated"
+            ).with_usage(usage)
+        try:
+            parsed = parse_json_object(content)
+        except InvalidModelOutput as exc:
+            raise exc.with_usage(usage) from None
         return StructuredResult(
             parsed_json=parsed,
             raw_text_len=len(content) if isinstance(content, str) else 0,

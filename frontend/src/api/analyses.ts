@@ -102,6 +102,8 @@ export const estimateSchema = z.object({
   cost_currency: z.string().nullable(),
   pricing_source: z.string().nullable(),
   cloud_transfer: z.boolean(),
+  // Часть оценки, добавленная правилами организации (этап 11); у старых анализов поля нет.
+  rules_extra_tokens: z.number().optional().default(0),
   note: z.string(),
 })
 export type Estimate = z.infer<typeof estimateSchema>
@@ -153,7 +155,21 @@ export const summarySchema = z.looseObject({
     by_severity: z.record(z.string(), z.number()),
     missing_clauses: z.number(),
     contradictions: z.number(),
+    by_rule: z.record(z.string(), z.number()).optional(),
   }),
+  // Применённые правила организации (этап 11, из snapshot анализа).
+  risk_rules: z
+    .array(
+      z.object({
+        code: z.string(),
+        title: z.string(),
+        category: z.string(),
+        kind: z.string(),
+        revision: z.number().nullable().optional(),
+        risks: z.number(),
+      }),
+    )
+    .optional(),
   statement: z.string(),
   warnings: z.array(z.string()),
   prompt_injection: z.array(z.object({ fragment_key: z.string(), code: z.string() })),
@@ -236,6 +252,8 @@ export const riskSchema = z.object({
   validation_notes: record,
   search_scope: searchScopeSchema.nullable(),
   dedup_group: z.string().nullable(),
+  // Код правила организации (этап 11); у рисков до этапа 11 поля нет.
+  rule_code: z.string().nullable().optional(),
   evidence: z.array(evidenceSchema),
 })
 export type Risk = z.infer<typeof riskSchema>
@@ -270,6 +288,7 @@ export interface AnalysisRequest {
   model_id: string
   cloud_consent: boolean
   redaction_preview_id?: string | null
+  rule_ids?: string[]
 }
 
 const id = (value: string) => encodeURIComponent(value)

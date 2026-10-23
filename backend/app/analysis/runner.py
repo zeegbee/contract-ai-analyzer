@@ -40,7 +40,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.analysis import prompts
 from app.analysis.chunking import CHARS_PER_TOKEN, DEFAULT_CONTEXT_TOKENS, estimate_tokens
-from app.analysis.dedup import SEVERITY_RANK, Candidate, deduplicate
+from app.analysis.dedup import SEVERITY_RANK, Candidate, MergedRisk, deduplicate
 from app.analysis.errors import safe_message
 from app.analysis.evidence import (
     MATCHED,
@@ -64,11 +64,19 @@ from app.analysis.schemas import (
     StructureOut,
     VerifierOut,
     provider_schema,
+    risk_list_schema,
 )
 from app.analysis.structure import build_sections, edge_fragments, key_fragments, merge_llm_structure, outline
 from app.config import Settings
 from app.jobs.registry import JobError
-from app.llm.base import ChatMessage, GenerationParams, LLMProvider, StructuredRequest, StructuredResult
+from app.llm.base import (
+    ChatMessage,
+    GenerationParams,
+    LLMProvider,
+    StructuredRequest,
+    StructuredResult,
+    Usage,
+)
 from app.llm.errors import ContextTooLong, InvalidModelOutput, ProviderError
 from app.llm.factory import ProviderFactory
 from app.logging import bind_context, get_logger
@@ -194,6 +202,20 @@ def _validation_errors(exc: ValidationError) -> list[str]:
     return [f"{'.'.join(str(p) for p in e['loc']) or 'root'}: {e['type']}" for e in exc.errors()[:10]]
 
 
+def _merge_notes(m: MergedRisk) -> dict[str, Any]:
+    """Отметки о слиянии рисков, источнике и коде правила организации."""
+    notes: dict[str, Any] = {}
+    if m.merged_count > 1:
+        notes["merged_from"] = m.merged_count
+    if m.rule_code_unknown:
+        notes["rule_code_unknown"] = True
+    if m.merged_rules:
+        notes["merged_rules"] = m.merged_rules
+    if "cross_section" in m.sources:
+        notes["from_cross_section"] = True
+    return notes
+
+
 class AnalysisRunner:
     def __init__(
         self,
@@ -297,6 +319,9 @@ class AnalysisRunner:
             self.party = analysis.party
             self.party_name = analysis.party_name
             self.categories = [RiskCategory(c) for c in analysis.categories]
+            # Правила организации — только из snapshot (повтор не зависит от изменений правил).
+            self.rules: list[dict[str, Any]] = list(self.snapshot.get("risk_rules") or [])
+            self.rule_codes = frozenset(r["code"] for r in self.rules)
             self.depth = analysis.depth
             self.cloud_transfer = analysis.cloud_transfer
             await db.commit()
@@ -499,10 +524,10 @@ class AnalysisRunner:
     def _budget_exhausted(self) -> bool:
         return self._tokens_used() >= self.token_limit
 
-    def _add_usage(self, result: StructuredResult) -> tuple[int | None, int | None]:
+    def _add_usage(self, u: Usage | None) -> tuple[int | None, int | None]:
+        """Учёт расхода вызова, в т.ч. отклонённого (обрыв по длине, неразбираемый ответ): токены оплачены."""
         usage = dict(self.usage)
         usage["calls"] = int(usage.get("calls", 0)) + 1
-        u = result.usage
         prompt = u.prompt_tokens if u else None
         completion = u.completion_tokens if u else None
         if prompt is None and completion is None:
@@ -584,9 +609,13 @@ class AnalysisRunner:
         schema_name: str,
         *,
         role: str = "analysis",
+        schema: dict[str, Any] | None = None,
     ) -> Generated[T]:
-        """Вызов модели с валидацией по схеме и одной попыткой исправления формата (repair)."""
-        schema = provider_schema(model_cls)
+        """Вызов модели с валидацией по схеме и одной попыткой исправления формата (repair).
+
+        `schema` — JSON Schema для провайдера, если она отличается от схемы модели ответа (правила).
+        """
+        schema = schema or provider_schema(model_cls)
         attempt_messages = messages
         prompt_total: int | None = None
         completion_total: int | None = None
@@ -602,17 +631,20 @@ class AnalysisRunner:
             try:
                 result = await self._call(target, req)
             except InvalidModelOutput as exc:
-                if exc.code == "output_truncated":
-                    raise OutputError("output_truncated") from None
+                self._add_usage(exc.usage)
+                truncated = exc.code == "output_truncated"
+                log.info("analysis_output_rejected", schema=schema_name, attempt=attempt, code=exc.code)
                 if attempt == 1:
-                    raise OutputError("invalid_model_output") from None
-                attempt_messages = [*messages, prompts.repair_message([exc.code])]
+                    raise OutputError("output_truncated" if truncated else "invalid_model_output") from None
+                # Обрыв по длине — обычно зацикливание модели: повтор с просьбой ответить короче.
+                retry = prompts.shorten_message() if truncated else prompts.repair_message([exc.code])
+                attempt_messages = [*messages, retry]
                 continue
             except ContextTooLong:
                 raise OutputError("context_too_long") from None
             except ProviderError as exc:
                 raise self._provider_failure(exc, role) from None
-            prompt, completion = self._add_usage(result)
+            prompt, completion = self._add_usage(result.usage)
             if prompt is not None:
                 prompt_total = (prompt_total or 0) + prompt
             if completion is not None:
@@ -719,6 +751,7 @@ class AnalysisRunner:
                 part=chunk.index + 1,
                 parts=total,
                 masked=self.masked,
+                rules=self.rules,
             )
             async with self._tx() as (db, _analysis):
                 await db.execute(
@@ -727,7 +760,13 @@ class AnalysisRunner:
                     .values(status=ChunkStatus.running, attempts=AnalysisChunk.attempts + 1)
                 )
             try:
-                out = await self._generate(self.target, RiskList, messages, "chunk_risks")
+                out = await self._generate(
+                    self.target,
+                    RiskList,
+                    messages,
+                    "chunk_risks",
+                    schema=self._risk_schema(prompts.CHUNK_RULE_KINDS),
+                )
             except OutputError as exc:
                 await self._save_chunk(chunk, ChunkStatus.failed, error_code=exc.code)
                 log.info("analysis_chunk_failed", chunk=chunk.index, code=exc.code)
@@ -772,8 +811,10 @@ class AnalysisRunner:
             return
         find_contradictions = RiskCategory.contradiction in self.categories
         find_missing = RiskCategory.missing_clause in self.categories
+        # Правила «отсутствующее условие» проверяются межраздельным проходом и без категории missing_clause.
+        rule_checks = bool(prompts.rules_for(self.rules, self.categories, prompts.CROSS_RULE_KINDS))
         result: dict[str, Any]
-        if not (find_contradictions or find_missing):
+        if not (find_contradictions or find_missing or rule_checks):
             result = {"status": "skipped", "reason": "not_requested"}
         elif self._budget_exhausted():
             result = {"status": "skipped", "reason": "token_budget_exhausted"}
@@ -810,10 +851,17 @@ class AnalysisRunner:
                 find_contradictions=find_contradictions,
                 find_missing=find_missing,
                 masked=self.masked,
+                rules=self.rules,
             )
             scope = SeqScope.of([f.seq for f in heads] + [f.seq for f in keys])
             try:
-                out = await self._generate(self.target, RiskList, messages, "cross_section_risks")
+                out = await self._generate(
+                    self.target,
+                    RiskList,
+                    messages,
+                    "cross_section_risks",
+                    schema=self._risk_schema(prompts.CROSS_RULE_KINDS),
+                )
                 result = {
                     "status": "done",
                     "result": out.value.model_dump(mode="json"),
@@ -833,9 +881,28 @@ class AnalysisRunner:
     def _in_scope(self, risk: RiskItem) -> bool:
         if risk.category in self.categories:
             return True
+        # Риск по выбранному правилу (категория правила выбрана — проверено при запуске).
+        if risk.rule_code is not None and risk.rule_code in self.rule_codes:
+            return True
         if risk.kind is RiskKind.missing_clause and RiskCategory.missing_clause in self.categories:
             return True
         return risk.kind is RiskKind.contradiction and RiskCategory.contradiction in self.categories
+
+    def _risk_schema(self, kinds: frozenset[str]) -> dict[str, Any]:
+        """Схема ответа прохода: `rule_code` — только коды правил этого прохода (без правил — поля нет)."""
+        return risk_list_schema([r["code"] for r in prompts.rules_for(self.rules, self.categories, kinds)])
+
+    def _candidate(self, risk: RiskItem, sources: set[str], seqs: set[int]) -> Candidate:
+        """Неизвестный код правила снимается до дедупликации: риск остаётся, код — нет.
+
+        Отметка `rule_code_unknown` — только если в анализе есть правила (иначе код — просто шум модели).
+        """
+        if risk.rule_code is None or risk.rule_code in self.rule_codes:
+            return Candidate(risk, sources, seqs)
+        unknown = bool(self.rules) and risk.rule_code.lower() not in ("null", "none")
+        return Candidate(
+            risk.model_copy(update={"rule_code": None}), sources, seqs, rule_code_unknown=unknown
+        )
 
     def _candidates(self) -> tuple[list[Candidate], int]:
         candidates: list[Candidate] = []
@@ -846,7 +913,7 @@ class AnalysisRunner:
             seqs = set(range(chunk.seq_start, chunk.seq_end + 1))
             for risk in RiskList.model_validate(chunk.result).risks:
                 if self._in_scope(risk):
-                    candidates.append(Candidate(risk, {str(chunk.id)}, seqs))
+                    candidates.append(self._candidate(risk, {str(chunk.id)}, seqs))
                 else:
                     dropped += 1
         cross = self.stage_results.get("cross_section") or {}
@@ -854,7 +921,7 @@ class AnalysisRunner:
             seqs = set(SeqScope.from_json(cross["scope"]).seqs())
             for risk in RiskList.model_validate(cross["result"]).risks:
                 if self._in_scope(risk):
-                    candidates.append(Candidate(risk, {"cross_section"}, seqs))
+                    candidates.append(self._candidate(risk, {"cross_section"}, seqs))
                 else:
                     dropped += 1
         return candidates, dropped
@@ -900,10 +967,7 @@ class AnalysisRunner:
                     risk = m.risk
                 scope = SeqScope.of(m.scope_seqs)
                 scopes[key] = scope.to_json()
-                if m.merged_count > 1:
-                    notes["merged_from"] = m.merged_count
-                if "cross_section" in m.sources:
-                    notes["from_cross_section"] = True
+                notes.update(_merge_notes(m))
                 texts = " ".join(
                     t
                     for t in (
@@ -956,6 +1020,7 @@ class AnalysisRunner:
                     search_scope=search_scope,
                     source_chunk_ids=sorted(uuid.UUID(s) for s in m.sources if s != "cross_section"),
                     dedup_group=f"G-{number:03d}" if m.merged_count > 1 else None,
+                    rule_code=risk.rule_code,
                 )
                 db.add(row)
                 for item in m.evidence:
@@ -1351,7 +1416,12 @@ class AnalysisRunner:
                 row.validation_notes = notes
                 infos.append(
                     RiskInfo(
-                        risk.kind, risk.severity, status, notes.get("verifier"), notes.get("quote_retry")
+                        risk.kind,
+                        risk.severity,
+                        status,
+                        notes.get("verifier"),
+                        notes.get("quote_retry"),
+                        risk.rule_code,
                     )
                 )
             # Структура хранится в виде, который видела модель; в отчёт — с исходными значениями.
@@ -1385,6 +1455,7 @@ class AnalysisRunner:
                 injection_hits=self.stage_results.get("injection", []),
                 structure=structure,
                 page_source=self.page_source,
+                rules=self.rules,
             )
             analysis.status = AnalysisStatus.completed_with_warnings if warnings else AnalysisStatus.completed
             analysis.finished_at = _now()

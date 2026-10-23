@@ -47,6 +47,7 @@ class RiskInfo:
     validation_status: ValidationStatus
     verifier: str | None
     quote_retry: str | None
+    rule_code: str | None = None
 
 
 def build_coverage(
@@ -147,6 +148,7 @@ def build_summary(
     injection_hits: Sequence[dict[str, Any]],
     structure: dict[str, Any] | None,
     page_source: PageSource | None,
+    rules: Sequence[dict[str, Any]] = (),
 ) -> dict[str, Any]:
     by_status = Counter(r.validation_status.value for r in risks)
     shown = [r for r in risks if r.validation_status is not ValidationStatus.rejected]
@@ -185,7 +187,14 @@ def build_summary(
             "prompt injection). Они не выполнялись, но результаты по соответствующим фрагментам стоит "
             "проверить особенно внимательно."
         )
+    if rules:
+        limitations.append(
+            "Применены правила рисков организации: модель проверяла договор по их описанию. Отметка "
+            "правила у риска — вывод модели; отсутствие риска по правилу не доказывает, что договор "
+            "ему соответствует."
+        )
     limitations.extend(_BASE_LIMITATIONS)
+    by_rule = Counter(r.rule_code for r in shown if r.rule_code)
     model = snapshot.get("model", {})
     provider = snapshot.get("provider", {})
     verifier = snapshot.get("verifier", {})
@@ -223,7 +232,20 @@ def build_summary(
             "by_severity": dict(by_severity),
             "missing_clauses": sum(1 for r in shown if r.kind is RiskKind.missing_clause),
             "contradictions": sum(1 for r in shown if r.kind is RiskKind.contradiction),
+            "by_rule": dict(by_rule),
         },
+        # Применённые правила организации (из snapshot, с ревизией) и число показанных рисков по каждому.
+        "risk_rules": [
+            {
+                "code": r["code"],
+                "title": r["title"],
+                "category": r["category"],
+                "kind": r["kind"],
+                "revision": r.get("revision"),
+                "risks": by_rule.get(r["code"], 0),
+            }
+            for r in rules
+        ],
         "statement": statement,
         "warnings": list(warnings),
         "prompt_injection": list(injection_hits),

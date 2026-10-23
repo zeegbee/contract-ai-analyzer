@@ -7,7 +7,8 @@
 - структура договора — стороны вида «ООО «…»» из текста;
 - анализ части текста — риск «одностороннее изменение» с дословной цитатой из фрагмента, где есть
   «в одностороннем порядке»; риск «неустойка» — из фрагмента со словом «неустойк»; и риск с
-  ВЫДУМАННОЙ цитатой (её нет в тексте) — сервер обязан его отклонить;
+  ВЫДУМАННОЙ цитатой (её нет в тексте) — сервер обязан его отклонить; если в системном сообщении
+  есть правило организации категории penalties (этап 11), риск «неустойка» ссылается на его код;
 - межраздельный проход — одно отсутствующее условие (без цитаты);
 - повторный запрос цитаты — модель отзывает риск;
 - верификатор — «подтверждает» для всех цитат;
@@ -37,6 +38,7 @@ _FRAGMENT = re.compile(r'<fragment id="(F\d{6})"[^>]*>(.*?)</fragment>', re.S)
 _EVIDENCE = re.compile(r'<evidence no="(\d+)">')
 _PARTY = re.compile(r"(?:ООО|АО|ПАО|ИП)\s+«[^»]{1,100}»")
 _SENTENCE = re.compile(r"(?<=[.;!?])\s+")
+_PENALTY_RULE = re.compile(r'<rule code="([^"]+)" category="penalties"')
 
 
 def minimal(schema: dict[str, Any]) -> Any:
@@ -82,21 +84,32 @@ def risk(
         "model_confidence": 0.8,
         "evidence": [{"fragment_id": fragment_id, "quote": quote}] if fragment_id and quote else [],
         "search_scope": None,
+        "rule_code": None,
     }
     item.update(extra)
     return item
 
 
-def chunk_risks(user: str) -> dict[str, Any]:
+def chunk_risks(system: str, user: str) -> dict[str, Any]:
     found: list[dict[str, Any]] = []
     frags = fragments(user)
+    rule = _PENALTY_RULE.search(system)
     for key, text in frags:
         quote = sentence_with(text, "в одностороннем порядке")
         if quote:
             found.append(risk("Одностороннее изменение цены", "unilateral_changes", key, quote))
         quote = sentence_with(text, "неустойк")
         if quote:
-            found.append(risk("Высокая неустойка", "penalties", key, quote, severity="medium"))
+            found.append(
+                risk(
+                    "Высокая неустойка",
+                    "penalties",
+                    key,
+                    quote,
+                    severity="medium",
+                    rule_code=rule.group(1) if rule else None,
+                )
+            )
     if frags and "Часть 1 из" in user:
         # Цитаты нет в тексте договора: проверка доказательств должна отклонить этот риск.
         found.append(risk("Удержание оплаты", "payment", frags[0][0], FABRICATED_QUOTE))
@@ -123,7 +136,9 @@ def answer(body: dict[str, Any]) -> dict[str, Any]:
     system = next((m.get("content", "") for m in messages if m.get("role") == "system"), "")
     user = "\n".join(m.get("content", "") for m in messages if m.get("role") == "user")
     if props == {"risks", "notes"}:
-        return cross_section() if system.startswith("Ты проверяешь договор целиком") else chunk_risks(user)
+        if system.startswith("Ты проверяешь договор целиком"):
+            return cross_section()
+        return chunk_risks(system, user)
     if "parties" in props:
         names = list(dict.fromkeys(_PARTY.findall(html.unescape(user))))[:2]
         labels = ["party_a", "party_b"]

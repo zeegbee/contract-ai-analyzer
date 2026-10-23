@@ -239,9 +239,16 @@ async def test_invalid_or_truncated_output_is_not_retried() -> None:
     with pytest.raises(InvalidModelOutput) as exc:
         await _openrouter(recorder).generate_structured(_request())
     assert exc.value.code == "invalid_json" and len(recorder.requests) == 1
+    assert exc.value.usage is None  # провайдер не сообщил расход
+    usage = {"prompt_tokens": 900, "completion_tokens": 16384, "total_tokens": 17284, "cost": 0.0123}
     with pytest.raises(InvalidModelOutput) as exc:
-        await _openrouter(Recorder(chat_ok('{"risks": [', finish="length"))).generate_structured(_request())
+        await _openrouter(Recorder(chat_ok('{"risks": [', finish="length", usage=usage))).generate_structured(
+            _request()
+        )
+    # Ответ отклонён, но расход оплаченного вызова передаётся для учёта в анализе.
     assert exc.value.code == "output_truncated"
+    assert exc.value.usage is not None and exc.value.usage.completion_tokens == 16384
+    assert str(exc.value.usage.cost) == "0.0123"
     with pytest.raises(InvalidModelOutput):
         await _openrouter(Recorder(chat_ok("[1, 2]"))).generate_structured(_request())
 

@@ -151,6 +151,22 @@ function SummaryPanel({ analysis, summary }: { analysis: AnalysisDetail; summary
           {snapshot.captured_at ? ` · ${formatDateTime(snapshot.captured_at)}` : ''}
         </Row>
       </dl>
+      {summary?.risk_rules && summary.risk_rules.length > 0 && (
+        <details className="text-sm">
+          <summary className="cursor-pointer font-medium">
+            {t.rulesApplied}: {summary.risk_rules.length}
+          </summary>
+          <ul className="mt-2 space-y-1 pl-5 text-slate-800">
+            {summary.risk_rules.map((r) => (
+              <li key={r.code}>
+                <span className="font-mono text-xs">{r.code}</span> {r.title} (
+                {ru.analyses.categories[r.category] ?? r.category}
+                {r.revision ? `; ${t.ruleRevision} ${r.revision}` : ''}) — {t.rulesRisks}: {r.risks}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
       {summary && summary.warnings.length > 0 && (
         <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
           <p className="font-medium">{t.warnings}</p>
@@ -310,7 +326,13 @@ export function AnalysisPage() {
 
       <SummaryPanel analysis={analysis} summary={analysis.summary} />
       {analysis.coverage && <CoveragePanel coverage={analysis.coverage} />}
-      {finished && <RisksSection analysisId={analysis.id} documentId={analysis.document_id} />}
+      {finished && (
+        <RisksSection
+          analysisId={analysis.id}
+          documentId={analysis.document_id}
+          rules={analysis.summary?.risk_rules ?? []}
+        />
+      )}
       {active && <p className="text-sm text-slate-600">{t.waiting}</p>}
       <ExportPanel analysisId={analysis.id} finished={finished} />
     </section>

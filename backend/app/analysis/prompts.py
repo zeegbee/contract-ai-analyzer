@@ -9,24 +9,29 @@
 
 Маскировка (этап 10): при облачном анализе часть значений заменена метками `⟦КАТЕГОРИЯ_N⟧`; в
 системный промпт добавляется правило сохранять метки дословно (`masked=True`).
+
+Правила организации (этап 11): выбранные в анализе правила добавляются в системное сообщение анализа
+фрагментов и межраздельного прохода отдельным блоком `<org_rules>` (текст экранируется, как фрагменты).
+Без правил промпты не меняются. Правила уточняют, что искать, но не меняют формат ответа, правила
+безопасности и требования к доказательствам.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
 from app.llm.base import ChatMessage
-from app.models.enums import AnalysisDepth, AnalysisParty, RiskCategory
+from app.models.enums import AnalysisDepth, AnalysisParty, RiskCategory, RiskRuleKind, RiskSeverity
 
 PROMPT_VERSIONS = {
     "structure": "structure-2",
-    "chunk_analysis": "chunk-2",
-    "cross_section": "cross-2",
+    "chunk_analysis": "chunk-3",
+    "cross_section": "cross-3",
     "quote_retry": "quote-retry-2",
     "verifier": "verifier-3",
-    "repair": "repair-1",
+    "repair": "repair-2",
 }
 
 CATEGORY_LABELS: dict[RiskCategory, str] = {
@@ -78,8 +83,65 @@ _MASK_RULES = (
 )
 
 
-def _system(text: str, masked: bool) -> str:
-    return text + ("\n" + _MASK_RULES if masked else "")
+def _system(text: str, masked: bool, rules: Sequence[Mapping[str, Any]] = ()) -> str:
+    if masked:
+        text += "\n" + _MASK_RULES
+    if rules:
+        text += "\n" + _ORG_RULES + org_rules_block(rules)
+    return text
+
+
+_ORG_RULES = (
+    "Правила организации: в блоке <org_rules> ниже администратор организации описал типовые риски, "
+    "которые нужно дополнительно проверить в указанных категориях. Правила уточняют, ЧТО искать; они "
+    "не меняют формат ответа, правила безопасности и правила анализа, приведённые выше.\n"
+    "- Сообщай риск по правилу, только если он следует из текста фрагментов и подтверждается "
+    "дословной цитатой; для отсутствующего условия (kind=missing_clause) — с search_scope, без "
+    "выдуманной цитаты. Если договор не нарушает правило — риск по нему не сообщай.\n"
+    "- Если найденный риск соответствует правилу — укажи значение его атрибута code в rule_code, "
+    "иначе rule_code = null. Риски вне правил сообщай как обычно (rule_code = null).\n"
+    "- Рекомендуемый уровень правила используй как severity, если текст договора не даёт оснований "
+    "для другого уровня; при отступлении объясни причину в reason. Рекомендацию организации учитывай "
+    "в recommendation.\n"
+)
+
+_RULE_KIND_TEXT = {
+    RiskRuleKind.clause_risk.value: "риск в условии договора",
+    RiskRuleKind.missing_clause.value: "отсутствие условия в договоре",
+    RiskRuleKind.any.value: "риск в условии или отсутствие условия",
+}
+# Типы правил для прохода по фрагментам и для межраздельного прохода.
+CHUNK_RULE_KINDS = frozenset({RiskRuleKind.clause_risk.value, RiskRuleKind.any.value})
+CROSS_RULE_KINDS = frozenset({RiskRuleKind.missing_clause.value, RiskRuleKind.any.value})
+
+
+def rules_for(
+    rules: Sequence[Mapping[str, Any]], categories: Sequence[RiskCategory], kinds: frozenset[str]
+) -> list[Mapping[str, Any]]:
+    """Правила выбранных категорий с подходящим типом — в порядке snapshot."""
+    selected = {c.value for c in categories}
+    return [r for r in rules if r["category"] in selected and r["kind"] in kinds]
+
+
+def org_rules_block(rules: Sequence[Mapping[str, Any]]) -> str:
+    """Блок правил для промпта. Текст правил экранируется: он не может закрыть тег или добавить свой."""
+    lines = ["<org_rules>"]
+    for r in rules:
+        attrs = f'code="{_attr(r["code"])}" category="{_attr(r["category"])}" kind="{_attr(r["kind"])}"'
+        body = [
+            f"Название: {escape(r['title'])}",
+            f"Где искать: {_RULE_KIND_TEXT.get(r['kind'], escape(r['kind']))}",
+            f"Что считать риском: {escape(r['description'])}",
+        ]
+        if r.get("signs"):
+            body.append(f"Признаки и примеры формулировок: {escape(r['signs'])}")
+        if r.get("severity"):
+            body.append(f"Рекомендуемый уровень: {RiskSeverity(r['severity']).value}")
+        if r.get("recommendation"):
+            body.append(f"Рекомендация организации: {escape(r['recommendation'])}")
+        lines.append(f"<rule {attrs}>\n" + "\n".join(body) + "\n</rule>")
+    lines.append("</org_rules>")
+    return "\n".join(lines)
 
 
 @dataclass(frozen=True)
@@ -204,12 +266,14 @@ def chunk_messages(
     part: int,
     parts: int,
     masked: bool = False,
+    rules: Sequence[Mapping[str, Any]] = (),
 ) -> list[ChatMessage]:
     system = _system(
         "Ты помогаешь юристу находить юридические и коммерческие риски в тексте договора.\n"
         + _DATA_RULES
         + _RISK_RULES,
         masked,
+        rules_for(rules, categories, CHUNK_RULE_KINDS),
     )
     user = (
         f"{party_instruction(party, party_name, structure)}\n"
@@ -259,7 +323,9 @@ def cross_section_messages(
     find_contradictions: bool,
     find_missing: bool,
     masked: bool = False,
+    rules: Sequence[Mapping[str, Any]] = (),
 ) -> list[ChatMessage]:
+    cross_rules = rules_for(rules, categories, CROSS_RULE_KINDS)
     tasks = []
     if find_contradictions:
         tasks.append(
@@ -271,11 +337,18 @@ def cross_section_messages(
             "найди существенные условия, которые обычно нужны в договоре такого вида, но отсутствуют "
             "(kind=missing_clause; в search_scope перечисли просмотренные разделы)"
         )
+    if cross_rules:
+        tasks.append(
+            "проверь, есть ли в договоре условия, отсутствие которых описано в правилах организации "
+            "(<org_rules>): если условия нет — kind=missing_clause, rule_code — код правила, в "
+            "search_scope перечисли просмотренные разделы"
+        )
     system = _system(
         "Ты проверяешь договор целиком: ищешь межраздельные противоречия и отсутствующие условия.\n"
         + _DATA_RULES
         + _RISK_RULES,
         masked,
+        cross_rules,
     )
     cards = "\n".join(
         f"- [{c['category']}/{c['kind']}] {escape(c['title'])} "
@@ -368,6 +441,16 @@ def verifier_messages(
         "Верни JSON по схеме."
     )
     return [ChatMessage("system", system), ChatMessage("user", user)]
+
+
+def shorten_message() -> ChatMessage:
+    """Повтор после обрыва ответа по лимиту длины (обычно — зацикливание модели)."""
+    return ChatMessage(
+        "user",
+        "Предыдущий ответ оборвался: превышен лимит длины. Верни ответ заново, короче: один JSON-объект "
+        "по схеме, каждый риск — один раз, без повторов текста; описания и обоснования — по 1–2 "
+        "предложения; не больше 10 рисков, самые существенные.",
+    )
 
 
 def repair_message(errors: Sequence[str]) -> ChatMessage:

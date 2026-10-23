@@ -152,10 +152,14 @@ async def test_csv_and_xlsx_are_protected_from_formula_injection(
     rows = list(csv.reader(io.StringIO(data.decode("utf-8-sig")), delimiter=";"))
     header, *body = rows
     assert header[:3] == ["ID", "Статус проверки", "Уровень"]
-    hostile = next(r for r in body if HOSTILE_TITLE in r[6])
-    assert hostile[6] == "'" + HOSTILE_TITLE
-    assert hostile[10].startswith("'+cmd") and hostile[11].startswith("'@SUM")
-    assert UNILATERAL in hostile[13] and hostile[14] == "1" and hostile[15] == "2.2"
+    col = {name: i for i, name in enumerate(header)}
+    hostile = next(r for r in body if HOSTILE_TITLE in r[col["Название"]])
+    assert hostile[col["Название"]] == "'" + HOSTILE_TITLE
+    assert hostile[col["Рекомендация"]].startswith("'+cmd")
+    assert hostile[col["Проект редакции"]].startswith("'@SUM")
+    assert UNILATERAL in hostile[col["Цитаты"]]
+    assert hostile[col["Страницы"]] == "1" and hostile[col["Пункты"]] == "2.2"
+    assert hostile[col["Правило"]] == ""
     for row in body:
         for value in row:
             assert not value.startswith(("=", "+", "-", "@")), value

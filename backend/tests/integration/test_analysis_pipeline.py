@@ -13,6 +13,7 @@ import pytest
 from app.analysis.chunking import FragmentSize, plan_chunks
 from app.analysis.runner import AnalysisRunner, Superseded
 from app.jobs import queue
+from app.llm.base import Usage
 from app.llm.errors import InvalidModelOutput, ProviderAuthError, ProviderUnavailable
 from app.models.enums import UserRole
 from app.models.users import User
@@ -206,14 +207,44 @@ async def test_invalid_output_twice_fails_single_chunk_analysis(
     assert await api.scalar("SELECT status FROM jobs") == "failed"
 
 
-async def test_truncated_output_is_not_repaired(api: ApiEnv, setup: tuple[User, ApiClient, Doc, Any]) -> None:
+def truncated() -> InvalidModelOutput:
+    """Обрыв по длине (зацикливание модели): токены ответа оплачены, хотя ответ отклонён."""
+    return InvalidModelOutput(code="output_truncated").with_usage(
+        Usage(prompt_tokens=900, completion_tokens=16384)
+    )
+
+
+async def test_truncated_output_retried_once_and_counted(
+    api: ApiEnv, setup: tuple[User, ApiClient, Doc, Any]
+) -> None:
     _, client, doc, model = setup
-    fake = FakeLLM({"chunk_risks": InvalidModelOutput(code="output_truncated")})
+    fake = FakeLLM({"chunk_risks": [truncated(), truncated()]})
     created = await start(client, doc, model)
     await run_jobs(api, fake)
-    assert len(fake.by_schema("chunk_risks")) == 1
+    calls = fake.by_schema("chunk_risks")
+    # Одна повторная попытка — с просьбой ответить короче; затем часть считается неудачной.
+    assert len(calls) == 2
+    assert "оборвался" in calls[1].messages[-1].content and "оборвался" not in user_text(calls[0])
     assert await api.scalar("SELECT error_code FROM analysis_chunks") == "output_truncated"
-    assert (await get_analysis(client, created["id"]))["status"] == "failed"
+    analysis = await get_analysis(client, created["id"])
+    assert analysis["status"] == "failed"
+    # Расход оборванных ответов учтён (раньше терялся).
+    assert analysis["usage"]["completion_tokens"] >= 2 * 16384
+
+
+async def test_truncated_output_recovers_on_shorter_retry(
+    api: ApiEnv, setup: tuple[User, ApiClient, Doc, Any]
+) -> None:
+    _, client, doc, model = setup
+    found = risks(risk("Изменение цены", [(key(6), UNILATERAL)]))
+    fake = FakeLLM({"chunk_risks": [truncated(), found], "cross_section_risks": [truncated(), risks()]})
+    created = await start(client, doc, model)
+    await run_jobs(api, fake)
+    analysis = await get_analysis(client, created["id"])
+    assert analysis["status"] == "completed", analysis
+    assert analysis["coverage"]["cross_section"]["status"] == "done"
+    assert len(fake.by_schema("cross_section_risks")) == 2
+    assert [r["title"] for r in (await risk_list(client, created["id"]))["items"]] == ["Изменение цены"]
 
 
 async def test_one_invalid_chunk_gives_completed_with_warnings(api: ApiEnv) -> None:

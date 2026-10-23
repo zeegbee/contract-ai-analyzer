@@ -168,6 +168,12 @@ docs/
 
 Настройки — `system_settings.redaction` = `{"categories": {code: bool}, "allow_unmasked": bool, "custom_dictionary": [{text, category}], "custom_patterns": [{pattern, category}], "allow_list": [str], "preview_ttl_hours": int}` (по умолчанию: ПДн и реквизиты включены, коммерческие и технические категории выключены, `allow_unmasked=false`).
 
+### 5.7 Правила рисков организации (этап 11, миграция 0009)
+
+**RiskRule** — `code` (`RR-001`…, из последовательности `risk_rule_code_seq`, уникален, не меняется), `title` (≤ 200), `category` (`RiskCategory`), `kind` (`clause_risk|missing_clause|any`), `description` (≤ 1000), `signs`, `recommendation` (≤ 1000, необязательные), `severity` (рекомендуемый уровень или NULL), `enabled`, `default_selected`, `archived_at`, `created_by_id`, `updated_by_id`, `version` (`version_id_col`). Не удаляется — архивируется. Изменения — `config_revisions` (`entity_type="risk_rule"`).
+
+**AnalysisRisk.rule_code** — VARCHAR(16), nullable: код правила, проверенный по snapshot анализа (не FK: правило могло измениться после анализа). Текст применённых правил — `config_snapshot.risk_rules = [{id, code, revision, title, category, kind, description, signs, severity, recommendation}]`.
+
 ## 6. Права доступа
 
 ### 6.1 Роли
@@ -571,4 +577,32 @@ Live-проверки OpenRouter/Ollama не входят в CI; если не �
 - **Запуск**: облачная модель (анализ или верификатор) без предпросмотра → 422 `redaction_preview_required`; чужой → 404; другая версия → 422 `redaction_preview_mismatch`; изменились настройки → 409 `redaction_settings_changed`; истёк → 409 `redaction_preview_expired`; повторно → 409 `redaction_preview_used`; локальная модель + предпросмотр → 422 `redaction_not_applicable`. Чанки планируются по длинам замаскированного текста. `retry` использует ту же таблицу; облачный анализ, запущенный до этапа 10, повторить нельзя (409 `redaction_required_for_retry`).
 - **Snapshot**: `config_snapshot.redaction = {mode, redaction_version, settings_revision, counts, unmasked_confirmed_at}` (null для локальной модели); `PIPELINE_VERSION = pipeline-2`, версии промптов повышены.
 - **Хранение**: предпросмотры и таблицы удаляются вместе с документом (каскад); housekeeping удаляет просроченные неиспользованные предпросмотры; `app.cli rotate-secrets` перешифровывает `entities_encrypted` и `mapping_encrypted`.
+
+## 23. Правила рисков организации (этап 11)
+
+План и решения владельца — [RISK_RULES_PLAN.md](RISK_RULES_PLAN.md). Код — `app/models/risk_rules.py`, `app/schemas/risk_rules.py`, `app/services/risk_rules.py`, `app/api/risk_rules.py`; промпты — `app/analysis/prompts.py` (`org_rules_block`, `rules_for`); UI — `frontend/src/pages/admin/RiskRulesPage.tsx` (страница «Правила», `/admin/risk-rules`), вложенные флажки в `NewAnalysisPage.tsx`, бейдж и фильтр в `RiskCard`/`RisksSection`.
+
+```
+Admin/Superadmin: правило (категория, тип, описание, признаки, уровень, рекомендация) → включено
+→ форма анализа: GET /api/risk-rules/available → флажки под своей категорией (отмечены по default_selected)
+→ POST /api/analyses {rule_ids}: правило включено, не в архиве, его категория выбрана, ≤ 20 правил,
+  блок правил ≤ 8000 символов → копия в config_snapshot.risk_rules (с ревизией)
+→ runner: chunks — правила kind ∈ {clause_risk, any}; cross_section — kind ∈ {missing_clause, any}
+  (межраздельный проход выполняется и без категорий contradiction/missing_clause, если есть такие правила)
+→ схема ответа на проход (schemas.risk_list_schema): без правил прохода поля rule_code нет, с правилами —
+  enum их кодов или null (без этого модель выдумывала коды — выявлено live-проверкой)
+→ ответ: RiskItem.rule_code (любая строка, обрезка до 64); код не из snapshot → снимается до дедупликации
+  (validation_notes.rule_code_unknown — только если в анализе есть правила)
+→ дедупликация: код основного риска или самого серьёзного из сливаемых, прочие — validation_notes.merged_rules
+→ шаг A, повтор цитаты, верификатор, итоговый статус — без изменений
+→ отчёт: summary.risk_rules (код, название, категория, тип, ревизия, число рисков), counts.by_rule;
+  экспорт — колонка «Правило»
+```
+
+- **Промпт.** Блок `<org_rules>` добавляется в **системное** сообщение после правил безопасности и анализа: правила пишет администратор (доверенный, но ограниченный ввод). Текст правил экранируется так же, как фрагменты (`&`, `<`, `>`, в атрибутах — `"`), поэтому не может закрыть блок или добавить свой. Пояснение для модели: правила уточняют, **что** искать, не меняют формат ответа и требования к доказательствам; риск по правилу — только при подтверждающей цитате (для `missing_clause` — с `search_scope`); соответствие правилу — в `rule_code`, иначе `null`. Без выбранных правил системные сообщения и схема ответа не меняются. Структура, повтор цитаты и верификатор правил не получают.
+- **Бюджет.** Длина блока правил вычитается из бюджета текста на чанк (`text_budget_tokens(..., extra_prompt_tokens)`), в snapshot — `chunking.rules_prompt_tokens`. Оценка (`estimate`) учитывает блок в каждой части и в межраздельном проходе (`rules_extra_tokens`); форма предупреждает, если правила увеличивают оценку больше чем на 25 %.
+- **Snapshot и повтор.** `retry` использует текст правил из snapshot, даже если правило затем изменено, выключено или отправлено в архив. Повтор по Idempotency-Key сравнивает и набор правил.
+- **Права.** Управление — `policies.can_manage_risk_rules` (Admin, Superadmin; в `/auth/me` — `capabilities.manage_risk_rules`); `available` — пустой список для ролей без права запуска анализа (Viewer). Аудит `risk_rule.created|updated|enabled|disabled|archived|restored` — код правила и имена изменённых полей, без текста.
+- **Маскировка (этап 10)** к тексту правил не применяется (решение владельца): форма правила предупреждает не указывать персональные и конфиденциальные данные.
+- **Версии.** `PIPELINE_VERSION = pipeline-3`, `SCHEMA_VERSION = schema-2`, промпты `chunk-3`, `cross-3`.
 

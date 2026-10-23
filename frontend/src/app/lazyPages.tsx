@@ -21,4 +21,7 @@ export const ModelPage = lazy(() => import('../pages/admin/ModelPage').then((m) 
 export const SettingsPage = lazy(() =>
   import('../pages/admin/SettingsPage').then((m) => ({ default: m.SettingsPage })),
 )
+export const RiskRulesPage = lazy(() =>
+  import('../pages/admin/RiskRulesPage').then((m) => ({ default: m.RiskRulesPage })),
+)
 export const AuditPage = lazy(() => import('../pages/admin/AuditPage').then((m) => ({ default: m.AuditPage })))

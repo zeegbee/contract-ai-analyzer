@@ -111,6 +111,11 @@ def can_manage_models(actor: Actor) -> bool:
     return is_admin(actor)
 
 
+def can_manage_risk_rules(actor: Actor) -> bool:
+    """Правила рисков организации: создание, изменение, включение, архив (Superadmin и Admin)."""
+    return is_admin(actor)
+
+
 def can_manage_providers(actor: Actor) -> bool:
     """Провайдеры: адрес, ключ, частная сеть, включение — только Superadmin (THREAT_MODEL §4.5)."""
     return is_superadmin(actor)
