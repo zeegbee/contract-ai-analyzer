@@ -9,3 +9,12 @@
   outline: 2px solid #1d4ed8;
   outline-offset: 2px;
 }
+
+/* Подгруппа (panelClass): легенда fieldset выводится внутри рамки, а не на её линии. */
+fieldset.panel > legend {
+  float: left;
+  width: 100%;
+}
+fieldset.panel > legend + * {
+  clear: left;
+}

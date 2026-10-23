@@ -25,7 +25,7 @@ function AvailableModels() {
       {items.length === 0 ? (
         <p className="text-sm text-slate-600">{t.empty}</p>
       ) : (
-        <ul className="divide-y divide-slate-200 rounded-lg border border-slate-200 bg-white text-sm">
+        <ul className="divide-y divide-slate-200 rounded-lg border border-slate-300 bg-white shadow-sm text-sm">
           {items.map((m) => (
             <li key={m.id} className="space-y-0.5 p-3">
               <p className="font-medium">
@@ -64,7 +64,7 @@ export function AccountPage() {
   return (
     <section aria-labelledby="account-title" className="space-y-6">
       <PageTitle id="account-title">{ru.account.title}</PageTitle>
-      <dl className="grid max-w-lg grid-cols-[max-content_1fr] gap-x-6 gap-y-1 rounded-lg border border-slate-200 bg-white p-4 text-sm">
+      <dl className="grid max-w-lg grid-cols-[max-content_1fr] gap-x-6 gap-y-1 rounded-lg border border-slate-300 bg-white shadow-sm p-4 text-sm">
         <dt className="text-slate-600">{ru.users.columns.name}</dt>
         <dd>{me.display_name}</dd>
         <dt className="text-slate-600">{ru.account.email}</dt>
@@ -99,7 +99,7 @@ export function AccountPage() {
         {sessions.isPending && <p>{ru.common.loading}</p>}
         {sessions.isError && <ErrorNotice error={sessions.error} onRetry={() => void sessions.refetch()} />}
         {sessions.data && (
-          <ul className="divide-y divide-slate-200 rounded-lg border border-slate-200 bg-white">
+          <ul className="divide-y divide-slate-200 rounded-lg border border-slate-300 bg-white shadow-sm">
             {sessions.data.map((s) => (
               <li key={s.id} className="flex flex-wrap items-center justify-between gap-3 p-3 text-sm">
                 <div className="space-y-0.5">

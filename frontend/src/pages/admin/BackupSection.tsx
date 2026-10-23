@@ -12,7 +12,7 @@ import {
   type BackupState,
 } from '../../api/backup'
 import { ErrorNotice } from '../../components/ErrorNotice'
-import { Button, inputClass, Notice } from '../../components/ui'
+import { Button, inputClass, Notice, panelClass } from '../../components/ui'
 import { ru } from '../../i18n/ru'
 import { formatBytes, formatDateTime } from '../../lib/format'
 
@@ -37,7 +37,7 @@ export function BackupSection() {
   const [saved, setSaved] = useState(false)
 
   return (
-    <section aria-labelledby="backup-title" className="space-y-4 rounded-lg border border-slate-200 bg-white p-4 text-sm">
+    <section aria-labelledby="backup-title" className="space-y-4 rounded-lg border border-slate-300 bg-white shadow-sm p-4 text-sm">
       <h2 id="backup-title" className="text-lg font-semibold">
         {t.title}
       </h2>
@@ -72,7 +72,7 @@ function BackupStatus({ state, fetchedAt }: { state: BackupState; fetchedAt: num
   const schedulerStale = seen === null || fetchedAt - seen > SCHEDULER_STALE_MS
 
   return (
-    <div className="space-y-2" aria-live="polite">
+    <div className={`space-y-2 ${panelClass}`} aria-live="polite">
       <h3 className="font-semibold">{t.status}</h3>
       {state.problems.length > 0 && (
         <div role="alert" className="rounded-md border border-red-200 bg-red-50 p-3 text-red-900">
@@ -169,7 +169,7 @@ function BackupForm({ state, onChange, onSaved }: { state: BackupState; onChange
 
   return (
     <form
-      className="space-y-4"
+      className={`space-y-4 ${panelClass}`}
       onSubmit={(e) => {
         e.preventDefault()
         save.mutate()
@@ -358,7 +358,7 @@ function BackupRuns({ runs }: { runs: BackupRun[] }) {
   const offsite = (run: BackupRun) =>
     run.target === 'none' ? t.offsite.none : run.verified ? t.offsite.verified : run.uploaded ? t.offsite.uploaded : t.offsite.failed
   return (
-    <div className="space-y-2">
+    <div className={`space-y-2 ${panelClass}`}>
       <h3 className="font-semibold">{t.runs}</h3>
       {runs.length === 0 ? (
         <p className="text-slate-600">{t.noRuns}</p>

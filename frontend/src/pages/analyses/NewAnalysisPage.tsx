@@ -17,7 +17,7 @@ import { AVAILABLE_MODELS_KEY, fetchAvailableModels } from '../../api/catalog'
 import { DOCUMENTS_KEY, fetchDocument, fetchDocuments } from '../../api/documents'
 import { ErrorNotice } from '../../components/ErrorNotice'
 import { type ModelChoice, ModelSelect } from '../../components/ModelSelect'
-import { Button, inputClass, Notice, PageTitle } from '../../components/ui'
+import { Button, inputClass, Notice, groupCardClass, PageTitle } from '../../components/ui'
 import { ru } from '../../i18n/ru'
 import { formatDateTime } from '../../lib/format'
 import { RedactionPreview } from './RedactionPreview'
@@ -165,7 +165,7 @@ export function NewAnalysisPage() {
       <PageTitle id="new-analysis-title">{t.title}</PageTitle>
       <p className="text-sm text-slate-700">{t.disclaimer}</p>
       <form onSubmit={onSubmit} noValidate className="space-y-5">
-        <div className="space-y-1">
+        <div className={`space-y-1 ${groupCardClass}`}>
           <label htmlFor={ids.document} className="block text-sm font-medium">
             {t.document}
           </label>
@@ -196,7 +196,7 @@ export function NewAnalysisPage() {
           )}
         </div>
         {documentId && versions.length > 1 && (
-          <div className="space-y-1">
+          <div className={`space-y-1 ${groupCardClass}`}>
             <label htmlFor={ids.version} className="block text-sm font-medium">
               {t.version}
             </label>
@@ -220,8 +220,8 @@ export function NewAnalysisPage() {
         )}
         {document.isError && <ErrorNotice error={document.error} />}
 
-        <fieldset className="space-y-2">
-          <legend className="text-sm font-medium">{t.party}</legend>
+        <fieldset className={`space-y-2 ${groupCardClass}`}>
+          <legend className="text-sm font-semibold">{t.party}</legend>
           {PARTIES.map((p) => (
             <label key={p} className="flex items-start gap-2 text-sm">
               <input type="radio" name="party" value={p} checked={party === p} onChange={() => setParty(p)} />
@@ -246,8 +246,8 @@ export function NewAnalysisPage() {
           )}
         </fieldset>
 
-        <fieldset className="space-y-2">
-          <legend className="text-sm font-medium">{t.categories}</legend>
+        <fieldset className={`space-y-2 ${groupCardClass}`}>
+          <legend className="text-sm font-semibold">{t.categories}</legend>
           <div className="flex gap-2">
             <Button
               onClick={() => {
@@ -276,8 +276,8 @@ export function NewAnalysisPage() {
           </div>
         </fieldset>
 
-        <fieldset className="space-y-2">
-          <legend className="text-sm font-medium">{t.depth}</legend>
+        <fieldset className={`space-y-2 ${groupCardClass}`}>
+          <legend className="text-sm font-semibold">{t.depth}</legend>
           {DEPTHS.map((d) => (
             <label key={d} className="flex items-start gap-2 text-sm">
               <input
@@ -297,8 +297,8 @@ export function NewAnalysisPage() {
           ))}
         </fieldset>
 
-        <fieldset className="space-y-2">
-          <legend className="text-sm font-medium">{t.model}</legend>
+        <fieldset className={`space-y-2 ${groupCardClass}`}>
+          <legend className="text-sm font-semibold">{t.model}</legend>
           <ModelSelect
             value={model}
             onChange={(v) => {

@@ -11,7 +11,7 @@ import {
 } from '../../api/redaction'
 import { ErrorNotice } from '../../components/ErrorNotice'
 import { Modal } from '../../components/Modal'
-import { Button, inputClass, Notice } from '../../components/ui'
+import { Button, inputClass, Notice, panelClass } from '../../components/ui'
 import { ru } from '../../i18n/ru'
 import { formatDateTime } from '../../lib/format'
 
@@ -97,7 +97,7 @@ export function RedactionSection() {
   const enablingUnmasked = Boolean(settings?.allow_unmasked && !data?.settings.allow_unmasked)
 
   return (
-    <section aria-labelledby="redaction-settings-title" className="space-y-3 rounded-lg border border-slate-200 bg-white p-4 text-sm">
+    <section aria-labelledby="redaction-settings-title" className="space-y-3 rounded-lg border border-slate-300 bg-white shadow-sm p-4 text-sm">
       <h2 id="redaction-settings-title" className="text-lg font-semibold">
         {t.title}
       </h2>
@@ -124,7 +124,7 @@ export function RedactionSection() {
 
           <div className="grid gap-4 md:grid-cols-2">
             {GROUPS.map((group) => (
-              <fieldset key={group} className="space-y-2">
+              <fieldset key={group} className={`space-y-2 ${panelClass}`}>
                 <legend className="font-semibold">{t.groups[group] ?? group}</legend>
                 <ul className="space-y-1.5">
                   {data.categories
@@ -157,7 +157,7 @@ export function RedactionSection() {
             <p className="text-xs text-amber-900">{t.allowUnmaskedHint}</p>
           </div>
 
-          <fieldset className="space-y-2">
+          <fieldset className={`space-y-2 ${panelClass}`}>
             <legend className="font-semibold">{t.dictionary}</legend>
             {settings.custom_dictionary.map((item, index) => (
               <div key={index} className="flex flex-wrap gap-2">
@@ -205,7 +205,7 @@ export function RedactionSection() {
             )}
           </fieldset>
 
-          <fieldset className="space-y-2">
+          <fieldset className={`space-y-2 ${panelClass}`}>
             <legend className="font-semibold">{t.patterns}</legend>
             {settings.custom_patterns.map((item, index) => (
               <div key={index} className="flex flex-wrap gap-2">
@@ -251,7 +251,7 @@ export function RedactionSection() {
             )}
           </fieldset>
 
-          <div className="space-y-1">
+          <div className={`space-y-1 ${panelClass}`}>
             <label htmlFor={ids.allowList} className="block font-semibold">
               {t.allowList}
             </label>
@@ -264,7 +264,7 @@ export function RedactionSection() {
             />
           </div>
 
-          <div className="space-y-1">
+          <div className={`space-y-1 ${panelClass}`}>
             <label htmlFor={ids.ttl} className="block font-semibold">
               {t.ttl}
             </label>

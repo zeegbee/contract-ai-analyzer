@@ -85,7 +85,7 @@ export function OverviewPage() {
           </p>
         )}
         {docs.length > 0 && (
-          <ul className="divide-y divide-slate-100 rounded-lg border border-slate-200 bg-white text-sm">
+          <ul className="divide-y divide-slate-100 rounded-lg border border-slate-300 bg-white shadow-sm text-sm">
             {docs.map((d) => (
               <li key={d.id} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
                 <Link to={`/documents/${encodeURIComponent(d.id)}`} className="break-words text-blue-800 underline">

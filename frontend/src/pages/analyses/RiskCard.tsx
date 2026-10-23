@@ -120,7 +120,7 @@ export function RiskCard({ risk, documentId }: { risk: Risk; documentId: string 
   return (
     <article
       aria-labelledby={headingId}
-      className={`space-y-3 rounded-lg border border-l-4 border-slate-200 bg-white p-4 ${borderTone}`}
+      className={`space-y-3 rounded-lg border border-l-4 border-slate-300 bg-white p-4 shadow-sm ${borderTone}`}
     >
       <header className="space-y-2">
         <div className="flex flex-wrap items-center gap-2">
@@ -204,7 +204,7 @@ export function RiskCard({ risk, documentId }: { risk: Risk; documentId: string 
       )}
 
       {(!isMissing || current.length > 0) && (
-        <section aria-label={t.evidence} className="space-y-2">
+        <section aria-label={t.evidence} className="space-y-2 border-t border-slate-200 pt-3">
           <h4 className="text-sm font-medium text-slate-800">{t.evidence}</h4>
           {current.length === 0 ? (
             <p className="text-sm text-slate-600">{t.noEvidence}</p>

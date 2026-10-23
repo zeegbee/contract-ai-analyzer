@@ -40,7 +40,7 @@ function CreateUserForm({ roles, onCreated }: { roles: Role[]; onCreated: (r: Te
     <form
       noValidate
       aria-labelledby="create-user-title"
-      className="space-y-3 rounded-lg border border-slate-200 bg-white p-4"
+      className="space-y-3 rounded-lg border border-slate-300 bg-white shadow-sm p-4"
       onSubmit={form.handleSubmit((v) => mutation.mutate(v))}
     >
       <h2 id="create-user-title" className="font-semibold">
@@ -153,7 +153,7 @@ export function UsersPage() {
       {query.isError && <ErrorNotice error={query.error} onRetry={() => void query.refetch()} />}
       {query.isSuccess && users.length === 0 && <p className="text-slate-600">{ru.users.empty}</p>}
       {users.length > 0 && (
-        <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+        <div className="overflow-x-auto rounded-lg border border-slate-300 bg-white shadow-sm">
           <table className="w-full text-left text-sm">
             <thead className="bg-slate-50 text-slate-600">
               <tr>

@@ -62,7 +62,7 @@ function CloudSettingsPanel() {
   const s = query.data
   const noticeText = text ?? s.cloud_notice.text
   return (
-    <section aria-labelledby="cloud-title" className="space-y-3 rounded-lg border border-slate-200 bg-white p-4">
+    <section aria-labelledby="cloud-title" className="space-y-3 rounded-lg border border-slate-300 bg-white shadow-sm p-4">
       <h2 id="cloud-title" className="text-lg font-semibold">
         {t.cloud.title}
       </h2>
@@ -456,7 +456,7 @@ function ProvidersPanel() {
         )}
       </div>
       {adding && (
-        <div className="rounded-lg border border-slate-200 bg-white p-4">
+        <div className="rounded-lg border border-slate-300 bg-white shadow-sm p-4">
           <ProviderForm
             onDone={() => {
               setAdding(false)
@@ -469,7 +469,7 @@ function ProvidersPanel() {
       {query.isError && <ErrorNotice error={query.error} onRetry={() => void query.refetch()} />}
       {query.data?.length === 0 && <p className="text-sm text-slate-600">{t.providers.empty}</p>}
       {query.data && query.data.length > 0 && (
-        <ul className="divide-y divide-slate-200 rounded-lg border border-slate-200 bg-white">
+        <ul className="divide-y divide-slate-200 rounded-lg border border-slate-300 bg-white shadow-sm">
           {query.data.map((p) => (
             <ProviderCard key={p.id} provider={p} />
           ))}
@@ -496,7 +496,7 @@ function AddModelForm({ providers, onDone }: { providers: Provider[]; onDone: ()
   })
   return (
     <form
-      className="space-y-3 rounded-lg border border-slate-200 bg-white p-4"
+      className="space-y-3 rounded-lg border border-slate-300 bg-white shadow-sm p-4"
       aria-label={t.models.add}
       onSubmit={(e) => {
         e.preventDefault()
@@ -588,7 +588,7 @@ function ModelsPanel() {
       {models.isError && <ErrorNotice error={models.error} onRetry={() => void models.refetch()} />}
       {models.data?.length === 0 && <p className="text-sm text-slate-600">{t.models.empty}</p>}
       {models.data && models.data.length > 0 && (
-        <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+        <div className="overflow-x-auto rounded-lg border border-slate-300 bg-white shadow-sm">
           <table className="w-full text-left text-sm">
             <thead className="bg-slate-50 text-slate-700">
               <tr>

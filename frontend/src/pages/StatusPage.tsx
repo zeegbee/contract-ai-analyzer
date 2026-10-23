@@ -30,7 +30,7 @@ export function StatusPage() {
       {query.isPending && <p aria-live="polite">{ru.status.loading}</p>}
       {query.isError && <ErrorNotice error={query.error} onRetry={() => void query.refetch()} />}
       {query.data && (
-        <div className="rounded-lg border border-slate-200 bg-white p-4">
+        <div className="rounded-lg border border-slate-300 bg-white shadow-sm p-4">
           <p
             aria-live="polite"
             className={query.data.status === 'ready' ? 'font-medium text-green-800' : 'font-medium text-amber-800'}

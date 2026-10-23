@@ -70,7 +70,7 @@ export function TextViewer({ documentId, versionId, pageCount, pageSource, focus
   }, [focusKey, focusLoaded])
 
   return (
-    <section aria-labelledby="text-title" className="space-y-3 rounded-lg border border-slate-200 bg-white p-4">
+    <section aria-labelledby="text-title" className="space-y-3 rounded-lg border border-slate-300 bg-white shadow-sm p-4">
       <h2 id="text-title" className="font-semibold">
         {t.title}
       </h2>
@@ -119,7 +119,7 @@ export function TextViewer({ documentId, versionId, pageCount, pageSource, focus
                 id={f.fragment_key}
                 tabIndex={f.fragment_key === focusKey ? -1 : undefined}
                 aria-current={f.fragment_key === focusKey ? 'true' : undefined}
-                className={`rounded-md border p-2 ${f.fragment_key === focusKey ? 'border-amber-400 bg-amber-50 ring-2 ring-amber-300' : f.kind === 'header_footer' ? 'border-dashed border-slate-200 text-slate-500' : 'border-slate-100'}`}
+                className={`rounded-md border p-2 ${f.fragment_key === focusKey ? 'border-amber-400 bg-amber-50 ring-2 ring-amber-300' : f.kind === 'header_footer' ? 'border-dashed border-slate-200 text-slate-500' : 'border-slate-200'}`}
               >
                 <div className="mb-1 flex flex-wrap gap-x-2 text-xs text-slate-500">
                   <code>{f.fragment_key}</code>

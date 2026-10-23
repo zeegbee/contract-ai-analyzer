@@ -34,7 +34,7 @@ export function AccessPanel({ documentId }: { documentId: string }) {
   }
 
   return (
-    <section aria-labelledby="access-title" className="space-y-3 rounded-lg border border-slate-200 bg-white p-4">
+    <section aria-labelledby="access-title" className="space-y-3 rounded-lg border border-slate-300 bg-white shadow-sm p-4">
       <h2 id="access-title" className="font-semibold">
         {t.shareTitle}
       </h2>

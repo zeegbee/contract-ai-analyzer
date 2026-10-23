@@ -44,7 +44,7 @@ export function LoginPage() {
   const { errors } = form.formState
   return (
     <main id="main" className="flex min-h-screen items-center justify-center bg-slate-50 px-4">
-      <section aria-labelledby="login-title" className="w-full max-w-sm space-y-4 rounded-lg border border-slate-200 bg-white p-6">
+      <section aria-labelledby="login-title" className="w-full max-w-sm space-y-4 rounded-lg border border-slate-300 bg-white shadow-sm p-6">
         <div>
           <p className="text-sm text-slate-600">{ru.appName}</p>
           <h1 id="login-title" className="text-xl font-semibold">

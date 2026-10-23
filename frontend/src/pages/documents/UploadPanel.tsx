@@ -86,7 +86,7 @@ export function UploadPanel({ limits }: { limits: UploadLimits }) {
   }
 
   return (
-    <section aria-labelledby="upload-title" className="space-y-3 rounded-lg border border-slate-200 bg-white p-4">
+    <section aria-labelledby="upload-title" className="space-y-3 rounded-lg border border-slate-300 bg-white shadow-sm p-4">
       <h2 id="upload-title" className="font-semibold">
         {t.title}
       </h2>

@@ -15,7 +15,7 @@ function progress(a: AnalysisSummary): string {
 
 export function AnalysesTable({ items, showDocument = true }: { items: AnalysisSummary[]; showDocument?: boolean }) {
   return (
-    <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+    <div className="overflow-x-auto rounded-lg border border-slate-300 bg-white shadow-sm">
       <table className="w-full text-left text-sm">
         <thead className="bg-slate-50 text-slate-600">
           <tr>

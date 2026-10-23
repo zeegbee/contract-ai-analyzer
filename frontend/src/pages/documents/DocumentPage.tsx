@@ -172,7 +172,7 @@ export function DocumentPage() {
       {remove.isError && <ErrorNotice error={remove.error} />}
 
       {version && (
-        <dl className="grid gap-1 rounded-lg border border-slate-200 bg-white p-4 text-sm sm:grid-cols-2">
+        <dl className="grid gap-1 rounded-lg border border-slate-300 bg-white shadow-sm p-4 text-sm sm:grid-cols-2">
           <Row label={t.file}>{version.original_filename}</Row>
           <Row label={t.format}>
             {ru.documents.formats[version.detected_format]}

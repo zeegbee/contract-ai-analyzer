@@ -21,7 +21,7 @@ export function SettingsPage() {
     <section aria-labelledby="settings-title" className="space-y-4">
       <PageTitle id="settings-title">{t.title}</PageTitle>
 
-      <section aria-labelledby="llm-settings-title" className="space-y-2 rounded-lg border border-slate-200 bg-white p-4 text-sm">
+      <section aria-labelledby="llm-settings-title" className="space-y-2 rounded-lg border border-slate-300 bg-white shadow-sm p-4 text-sm">
         <h2 id="llm-settings-title" className="text-lg font-semibold">
           {t.llm}
         </h2>
@@ -52,7 +52,7 @@ export function SettingsPage() {
       {system.data && (
         <div className="grid gap-4 md:grid-cols-2">
           {Object.entries(system.data.groups).map(([group, params]) => (
-            <section key={group} aria-label={t.groups[group] ?? group} className="rounded-lg border border-slate-200 bg-white p-4">
+            <section key={group} aria-label={t.groups[group] ?? group} className="rounded-lg border border-slate-300 bg-white shadow-sm p-4">
               <h2 className="mb-2 font-semibold">{t.groups[group] ?? group}</h2>
               <dl className="space-y-1 text-sm">
                 {params.map((p) => (

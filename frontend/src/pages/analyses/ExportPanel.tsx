@@ -24,7 +24,7 @@ export function ExportPanel({ analysisId, finished }: { analysisId: string; fini
   })
 
   return (
-    <section aria-labelledby="exports-title" className="space-y-3 rounded-lg border border-slate-200 bg-white p-4">
+    <section aria-labelledby="exports-title" className="space-y-3 rounded-lg border border-slate-300 bg-white shadow-sm p-4">
       <h2 id="exports-title" className="text-lg font-semibold">
         {t.title}
       </h2>

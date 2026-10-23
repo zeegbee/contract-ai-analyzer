@@ -137,7 +137,7 @@ function ModelForm({ model, onSaved }: { model: Model; onSaved: (m: Model) => vo
     </Field>
   )
   return (
-    <form className="space-y-4 rounded-lg border border-slate-200 bg-white p-4" onSubmit={submit}>
+    <form className="space-y-4 rounded-lg border border-slate-300 bg-white shadow-sm p-4" onSubmit={submit}>
       {mutation.isError && <ErrorNotice error={mutation.error} />}
       {mutation.isSuccess && <Notice tone="success">{ru.users.detail.saved}</Notice>}
       <div className="grid gap-3 sm:grid-cols-2">
@@ -337,7 +337,7 @@ export function ModelPage() {
         ← {ru.llm.title}
       </Link>
       <PageTitle id="model-title">{model.display_name}</PageTitle>
-      <dl className="grid max-w-2xl grid-cols-[max-content_1fr] gap-x-6 gap-y-1 rounded-lg border border-slate-200 bg-white p-4 text-sm">
+      <dl className="grid max-w-2xl grid-cols-[max-content_1fr] gap-x-6 gap-y-1 rounded-lg border border-slate-300 bg-white shadow-sm p-4 text-sm">
         <dt className="text-slate-600">{t.provider}</dt>
         <dd>
           {model.provider_name} {model.is_cloud && `(${ru.llm.providers.cloudBadge})`}

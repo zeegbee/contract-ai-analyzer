@@ -49,7 +49,7 @@ export function AuditPage() {
       {query.isError && <ErrorNotice error={query.error} onRetry={() => void query.refetch()} />}
       {query.isSuccess && entries.length === 0 && <p className="text-slate-600">{ru.audit.empty}</p>}
       {entries.length > 0 && (
-        <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+        <div className="overflow-x-auto rounded-lg border border-slate-300 bg-white shadow-sm">
           <table className="w-full text-left text-sm">
             <thead className="bg-slate-50 text-slate-600">
               <tr>

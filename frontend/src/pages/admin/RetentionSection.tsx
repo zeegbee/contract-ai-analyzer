@@ -50,7 +50,7 @@ export function RetentionSection() {
   const invalid = isEnabled && !validDays
 
   return (
-    <section aria-labelledby="retention-title" className="space-y-3 rounded-lg border border-slate-200 bg-white p-4 text-sm">
+    <section aria-labelledby="retention-title" className="space-y-3 rounded-lg border border-slate-300 bg-white shadow-sm p-4 text-sm">
       <h2 id="retention-title" className="text-lg font-semibold">
         {t.title}
       </h2>

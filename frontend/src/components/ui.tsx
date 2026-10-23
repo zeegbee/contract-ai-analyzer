@@ -26,6 +26,11 @@ export function Button({
 export const inputClass =
   'w-full rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600'
 
+// Подгруппа внутри карточки раздела: отделяет связанные поля от соседних групп.
+export const panelClass = 'panel rounded-md border border-slate-200 bg-slate-50 p-3'
+// Та же подгруппа, когда она стоит прямо на фоне страницы, а не внутри карточки.
+export const groupCardClass = 'panel rounded-lg border border-slate-300 bg-white p-4 shadow-sm'
+
 interface FieldProps {
   id: string
   label: string

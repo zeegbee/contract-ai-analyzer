@@ -116,7 +116,7 @@ function ModelAccess({ userId, editable }: { userId: string; editable: boolean }
       {query.data?.length === 0 && <p className="text-sm text-slate-600">{ru.users.models.empty}</p>}
       {query.data && query.data.length > 0 && (
         <>
-          <ul className="divide-y divide-slate-200 rounded-lg border border-slate-200 bg-white text-sm">
+          <ul className="divide-y divide-slate-200 rounded-lg border border-slate-300 bg-white shadow-sm text-sm">
             {query.data.map((m) => {
               const value = current(m)
               return (
@@ -227,7 +227,7 @@ export function UserDetailPage() {
       {message && <Notice tone="success">{message}</Notice>}
       {actionError && <ErrorNotice error={actionError} />}
 
-      <dl className="grid max-w-xl grid-cols-[max-content_1fr] gap-x-6 gap-y-1 rounded-lg border border-slate-200 bg-white p-4 text-sm">
+      <dl className="grid max-w-xl grid-cols-[max-content_1fr] gap-x-6 gap-y-1 rounded-lg border border-slate-300 bg-white shadow-sm p-4 text-sm">
         <dt className="text-slate-600">{ru.users.columns.email}</dt>
         <dd>{user.email}</dd>
         <dt className="text-slate-600">{t.status}</dt>

@@ -99,7 +99,7 @@ function SummaryPanel({ analysis, summary }: { analysis: AnalysisDetail; summary
   const counts = summary?.counts.by_validation_status ?? {}
   const partyName = analysis.party_name ?? summary?.party.resolved_name
   return (
-    <section aria-labelledby="summary-title" className="space-y-3 rounded-lg border border-slate-200 bg-white p-4">
+    <section aria-labelledby="summary-title" className="space-y-3 rounded-lg border border-slate-300 bg-white shadow-sm p-4">
       <h2 id="summary-title" className="text-lg font-semibold">
         {t.summary}
       </h2>
@@ -120,7 +120,7 @@ function SummaryPanel({ analysis, summary }: { analysis: AnalysisDetail; summary
           </li>
         </ul>
       )}
-      <dl className="grid gap-1 text-sm sm:grid-cols-2">
+      <dl className="grid gap-1 border-t border-slate-200 pt-3 text-sm sm:grid-cols-2">
         <Row label={t.party}>
           {ru.analyses.party[analysis.party]}
           {partyName ? ` — ${partyName}` : ''}
@@ -185,7 +185,7 @@ function CoveragePanel({ coverage }: { coverage: Coverage }) {
   const missed = coverage.sections.filter((s) => s.status !== 'analyzed')
   const cross = coverage.cross_section.status
   return (
-    <section aria-labelledby="coverage-title" className="space-y-2 rounded-lg border border-slate-200 bg-white p-4 text-sm">
+    <section aria-labelledby="coverage-title" className="space-y-2 rounded-lg border border-slate-300 bg-white shadow-sm p-4 text-sm">
       <h2 id="coverage-title" className="text-lg font-semibold">
         {t.coverage}
       </h2>

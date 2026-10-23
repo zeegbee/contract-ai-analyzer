@@ -90,7 +90,7 @@ export function RisksSection({ analysisId, documentId }: { analysisId: string; d
         <p className="text-sm text-slate-700">{t.none}</p>
       ) : (
         <>
-          <fieldset className="grid gap-3 rounded-lg border border-slate-200 bg-white p-3 sm:grid-cols-2 lg:grid-cols-5">
+          <fieldset className="grid gap-3 rounded-lg border border-slate-300 bg-white shadow-sm p-3 sm:grid-cols-2 lg:grid-cols-5">
             <legend className="px-1 text-sm font-medium">{t.filters}</legend>
             <Select
               label={t.severity}
@@ -142,7 +142,7 @@ export function RisksSection({ analysisId, documentId }: { analysisId: string; d
           {visible.length === 0 ? (
             <p className="text-sm text-slate-700">{t.empty}</p>
           ) : (
-            <div className="space-y-3">
+            <div className="space-y-4">
               {visible.map((r) => (
                 <RiskCard key={r.id} risk={r} documentId={documentId} />
               ))}

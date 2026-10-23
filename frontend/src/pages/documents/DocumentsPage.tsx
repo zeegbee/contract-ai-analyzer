@@ -46,12 +46,12 @@ export function DocumentsPage() {
       {query.isPending && <p aria-live="polite">{ru.common.loading}</p>}
       {query.isError && <ErrorNotice error={query.error} onRetry={() => void query.refetch()} />}
       {query.isSuccess && documents.length === 0 && (
-        <p className="rounded-md border border-slate-200 bg-white p-4 text-sm text-slate-700">
+        <p className="rounded-lg border border-slate-300 bg-white p-4 text-sm text-slate-700 shadow-sm">
           {me.capabilities.upload_documents ? ru.documents.empty : ru.documents.emptyViewer}
         </p>
       )}
       {documents.length > 0 && (
-        <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+        <div className="overflow-x-auto rounded-lg border border-slate-300 bg-white shadow-sm">
           <table className="w-full text-left text-sm">
             <thead className="border-b border-slate-200 bg-slate-50 text-xs text-slate-700">
               <tr>
