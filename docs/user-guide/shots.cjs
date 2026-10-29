@@ -8,9 +8,10 @@
 // чтобы показать форму анализа с оценкой объёма и облачным предупреждением; исходное состояние
 // восстанавливается в конце (в том числе при ошибке). Запросов к моделям при съёмке нет.
 //
-// Данные берутся со стенда: первый договор с завершённым анализом, договор без текстового слоя,
+// Данные берутся со стенда: завершённый анализ (предпочтительно с правилами организации и маскировкой),
 // первый пользователь кроме себя, первая модель каталога. Чего на стенде нет — тот снимок
-// пропускается, и в каталоге остаётся прежний файл.
+// пропускается, и в каталоге остаётся прежний файл. Снимок предпросмотра маскировки создаёт на стенде
+// предпросмотр (поиск данных без обращения к модели; неиспользованный удаляется по сроку действия).
 const path = require('path')
 const { chromium } = require(path.join(__dirname, '..', '..', 'frontend', 'node_modules', '@playwright/test'))
 
@@ -59,7 +60,8 @@ if (!PASSWORD) {
   }
   const toHeading = async (text) => {
     await settle()
-    await page.getByRole('heading', { name: text }).first().scrollIntoViewIfNeeded()
+    // Заголовок — к верху окна, даже если он уже виден.
+    await page.getByRole('heading', { name: text }).first().evaluate((el) => el.scrollIntoView({ block: 'start' }))
     await page.evaluate(() => window.scrollBy(0, -24))
   }
   const skip = (name, why) => console.warn(`пропущен ${name}: ${why}`)
@@ -88,19 +90,23 @@ if (!PASSWORD) {
     // Данные стенда
     const me = await api('GET', '/api/auth/me')
     const documents = (await api('GET', '/api/documents')).items
+    // Отчёт: завершённый анализ, лучше всего — с применёнными правилами организации и маскировкой.
     let doc = null
     let analysis = null
+    let best = -1
     for (const d of documents) {
-      const found = (await api('GET', `/api/analyses?document_id=${d.id}`)).items.find((a) =>
-        a.status.startsWith('completed'),
-      )
-      if (found) {
-        doc = d
-        analysis = found
-        break
+      for (const a of (await api('GET', `/api/analyses?document_id=${d.id}`)).items) {
+        if (!a.status.startsWith('completed')) continue
+        const detail = await api('GET', `/api/analyses/${a.id}`)
+        const score = (detail.summary?.risk_rules?.length ? 2 : 0) + (detail.redaction?.mode === 'masked' ? 1 : 0)
+        if (score > best) {
+          best = score
+          doc = d
+          analysis = a
+        }
       }
+      if (best === 3) break
     }
-    const scan = documents.find((d) => d.current_version?.extraction_status === 'unsupported_no_text')
     const user = (await api('GET', '/api/users')).items.find((u) => u.id !== me.id)
     const models = (await api('GET', '/api/admin/models')).items
     const model = models.find((m) => !m.is_cloud) || models[0]
@@ -135,6 +141,12 @@ if (!PASSWORD) {
 
       await page.goto(`${BASE}/analyses/new?document=${doc.id}`)
       await save('new-analysis')
+      const categories = page.locator('fieldset').filter({ has: page.locator('legend', { hasText: 'Категории рисков' }) })
+      if (await page.getByText('Правил выбрано').count()) {
+        await settle()
+        await categories.screenshot({ path: path.join(OUT, 'new-analysis-rules.png') })
+        console.log('снимок new-analysis-rules')
+      } else skip('new-analysis-rules', 'нет включённых правил рисков организации')
       const available = (await api('GET', '/api/models/available')).items
       const select = page.getByRole('combobox', { name: 'Модель', exact: true })
       const local = available.find((m) => !m.is_cloud)
@@ -150,12 +162,23 @@ if (!PASSWORD) {
         await select.selectOption(cloud.id)
         await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight))
         await save('new-analysis-cloud')
-      } else skip('new-analysis-cloud', 'нет доступной облачной модели (CAI_TEMP_ENABLE_MODELS=1)')
+        // Предпросмотр маскировки: согласие на передачу → «Проверить маскировку» (модель не вызывается).
+        const consent = page.getByRole('checkbox', { name: /Я ознакомился/ })
+        if (!(await consent.isChecked())) await consent.check()
+        await page.getByRole('button', { name: 'Проверить маскировку' }).click()
+        await page.getByText(/Будет скрыто значений|Данных для маскировки не найдено/).waitFor({ timeout: 120000 })
+        await save('redaction-preview')
+      } else {
+        skip('new-analysis-cloud', 'нет доступной облачной модели (CAI_TEMP_ENABLE_MODELS=1)')
+        skip('redaction-preview', 'нет доступной облачной модели (CAI_TEMP_ENABLE_MODELS=1)')
+      }
 
       await open('report-summary', `/analyses/${analysis.id}`)
       await toHeading('Риски')
       await save('report-risks')
-      const card = page.locator('article').first()
+      // Карточка с отметкой правила и цитатами; иначе — первая.
+      const withRule = page.locator('article').filter({ hasText: /Правило RR-/ }).filter({ hasText: 'Доказательства' })
+      const card = (await withRule.count()) ? withRule.first() : page.locator('article').first()
       await card.scrollIntoViewIfNeeded()
       await settle()
       await card.screenshot({ path: path.join(OUT, 'risk-card.png') })
@@ -163,12 +186,9 @@ if (!PASSWORD) {
       await toHeading('Экспорт')
       await save('report-export')
     } else {
-      for (const n of ['document', 'document-analyses-access', 'new-analysis', 'report-summary', 'report-risks', 'risk-card', 'report-export'])
+      for (const n of ['document', 'document-analyses-access', 'new-analysis', 'new-analysis-rules', 'redaction-preview', 'report-summary', 'report-risks', 'risk-card', 'report-export'])
         skip(n, 'нет договора с завершённым анализом')
     }
-
-    if (scan) await open('document-no-text', `/documents/${scan.id}`)
-    else skip('document-no-text', 'нет договора без текстового слоя (загрузите скан PDF)')
 
     await open('analyses', '/analyses')
     // Профиль: только верх страницы с первой сессией (остальные сессии — шум).
@@ -183,7 +203,20 @@ if (!PASSWORD) {
     await open('models', '/admin/models')
     if (model) await open('model-detail', `/admin/models/${model.id}`)
     else skip('model-detail', 'нет моделей в каталоге')
+    await open('risk-rules', '/admin/risk-rules')
+    const editRule = page.getByRole('button', { name: 'Изменить' }).first()
+    if (await editRule.count()) {
+      await editRule.click()
+      const dialog = page.getByRole('dialog')
+      await dialog.waitFor()
+      await settle()
+      await dialog.screenshot({ path: path.join(OUT, 'risk-rule-form.png') })
+      console.log('снимок risk-rule-form')
+      await dialog.getByRole('button', { name: 'Отмена' }).click()
+    } else skip('risk-rule-form', 'нет правил рисков организации')
     await open('settings', '/admin/settings')
+    await toHeading('Маскировка данных')
+    await save('settings-redaction')
     await open('audit', '/admin/audit')
     await open('status', '/status')
     // Смена пароля: шапка и форма, без пустого места под кнопкой.

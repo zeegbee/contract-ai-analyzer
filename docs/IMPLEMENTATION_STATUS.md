@@ -827,3 +827,21 @@ PostgreSQL для тестов — временный контейнер `postgr
 
 ### Изменённые файлы
 Новые: `backend/app/{api,schemas,services,models}/risk_rules.py`, миграция `20261023_0009_risk_rules.py`, `backend/tests/{unit/test_risk_rules_units.py,integration/test_risk_rules.py}`, `frontend/src/{api/riskRules.ts,pages/admin/RiskRulesPage.tsx,pages/admin/riskRules.test.tsx,pages/analyses/riskRules.test.tsx,test/riskRules.ts}`. Изменены: `backend/app/analysis/{__init__,chunking,dedup,prompts,report,runner,schemas}.py`, `backend/app/exports/{content,render}.py`, `backend/app/services/{analyses,audit}.py`, `backend/app/{main.py,api/auth.py,schemas/{analyses,users}.py,security/policies.py,models/{__init__,analyses,enums}.py}`, тесты `test_database.py`, `test_exports_api.py`, `test_security_sweep.py`; frontend — `api/{analyses,auth,catalog}.ts`, `app/{Layout,lazyPages,routes}.tsx`, `i18n/ru.ts`, `pages/admin/SettingsPage.tsx`, `pages/analyses/{AnalysisPage,NewAnalysisPage,RiskCard,RisksSection}.tsx`, `test/auth.ts`, `e2e/flow.e2e.ts`; `e2e/mock-llm/server.py`, `e2e/backup-offsite.sh`; документация — ARCHITECTURE, THREAT_MODEL, OPERATIONS, RISK_RULES_PLAN.
+
+## Доработка 2026-10-29 — обновление руководства пользователя
+
+По запросу владельца `docs/USER_GUIDE.docx` приведён к текущему интерфейсу (этапы 10–11 и доработки 20–23.10).
+
+### Что сделано
+- В `docs/user-guide/build.cjs` перенесены правки, которые владелец 21.10 внёс прямо в DOCX (формулировки разделов 1, 3.3, 4.2, 5.1, 6, 8; убраны рисунок «Скан без текстового слоя», предупреждение об отсутствии администратора на странице входа, «Проект редакции» в описании карточки и оговорка в экспорте; таблица категорий без строки заголовков — в `table()` добавлен режим `headers = null`). Текст собранного документа сверен с правленым DOCX: расхождения — только в дополненных местах.
+- Новое содержание: функции и ограничения маскировки и правил (раздел 1), права ролей (2), шапка с меню-вкладками и раздел «Правила» (3.3), правила организации в форме анализа (5.2), проверка маскировки для облачной модели (5.5), маскировка и применённые правила в итогах, фильтр «Правило организации», отметка правила в карточке риска (6), колонка «Правило» в экспорте (7), справочный список моделей в профиле (9), режим рассуждений модели (11.3), новый раздел 12 «Правила рисков организации», настройки маскировки (13.1), новые частые вопросы (14). Редакция руководства — 29.10.2026; 42 страницы, 27 рисунков.
+- Скриншоты пересняты на основном стенде (`shots.cjs`, `CAI_TEMP_ENABLE_MODELS=1`, состояние каталога моделей восстановлено) в текущем оформлении. Новые снимки: `new-analysis-rules`, `redaction-preview`, `risk-rules`, `risk-rule-form`, `settings-redaction`; `document-no-text` удалён. `shots.cjs`: отчёт берётся с анализа с правилами и маскировкой, карточка риска — с отметкой правила и цитатами, заголовок раздела прокручивается к верху окна.
+
+### Проверки (реально запущены)
+- `node shots.cjs` — 27 снимков без пропусков, «каталог моделей возвращён в исходное состояние».
+- `node build.cjs` — `written …USER_GUIDE.docx 5655363 bytes, 27 figures`.
+- Рендер в PDF через образ converter (LibreOffice) — 42 страницы; страницы с новыми разделами просмотрены.
+
+### Ограничения
+- При съёмке на стенде создан предпросмотр маскировки (удалится по сроку действия) и отметка согласия с облачным предупреждением у `root@example.org`; включение/выключение моделей на время съёмки записано в журнал аудита и историю конфигурации.
+- На скриншоте «Настройки» облачные модели показаны включёнными — снимок сделан во время временного включения.
