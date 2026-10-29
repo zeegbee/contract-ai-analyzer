@@ -23,6 +23,123 @@
 - Экспорт защищён правами доступа; CSV/XLSX защищены от formula injection.
 - Бэкап и восстановление; автоматические зашифрованные (age) бэкапы с выгрузкой в S3-совместимое хранилище или каталог и ротацией.
 
+## Скриншоты
+
+**Форма «Новый анализ»: договор, сторона, категории, глубина**
+
+<p align="center"><img src="docs/user-guide/screenshots/new-analysis.png" width="800" alt="Форма «Новый анализ»: договор, сторона, категории, глубина"></p>
+
+**Проверка маскировки: подсвеченные данные и список найденных значений**
+
+<p align="center"><img src="docs/user-guide/screenshots/redaction-preview.png" width="800" alt="Проверка маскировки: подсвеченные данные и список найденных значений"></p>
+
+**Охват, фильтры и начало списка рисков**
+
+<p align="center"><img src="docs/user-guide/screenshots/report-risks.png" width="800" alt="Охват, фильтры и начало списка рисков"></p>
+
+**Карточка риска с отметкой правила организации и доказательствами**
+
+<p align="center"><img src="docs/user-guide/screenshots/risk-card.png" width="800" alt="Карточка риска с отметкой правила организации и доказательствами"></p>
+
+<details>
+<summary>Остальные экраны (23)</summary>
+
+**Страница входа**
+
+<p align="center"><img src="docs/user-guide/screenshots/login.png" width="700" alt="Страница входа"></p>
+
+**Смена пароля**
+
+<p align="center"><img src="docs/user-guide/screenshots/change-password.png" width="700" alt="Смена пароля"></p>
+
+**Страница «Обзор»**
+
+<p align="center"><img src="docs/user-guide/screenshots/overview.png" width="700" alt="Страница «Обзор»"></p>
+
+**Раздел «Договоры»: загрузка и список**
+
+<p align="center"><img src="docs/user-guide/screenshots/documents.png" width="700" alt="Раздел «Договоры»: загрузка и список"></p>
+
+**Карточка договора: реквизиты файла и извлечённый текст**
+
+<p align="center"><img src="docs/user-guide/screenshots/document.png" width="700" alt="Карточка договора: реквизиты файла и извлечённый текст"></p>
+
+**Нижняя часть карточки: анализы договора и выдача доступа**
+
+<p align="center"><img src="docs/user-guide/screenshots/document-analyses-access.png" width="700" alt="Нижняя часть карточки: анализы договора и выдача доступа"></p>
+
+**Правила организации под категориями «Штрафы, пени, неустойки» и «Приёмка»**
+
+<p align="center"><img src="docs/user-guide/screenshots/new-analysis-rules.png" width="700" alt="Правила организации под категориями «Штрафы, пени, неустойки» и «Приёмка»"></p>
+
+**Оценка объёма для локальной модели**
+
+<p align="center"><img src="docs/user-guide/screenshots/new-analysis-estimate.png" width="700" alt="Оценка объёма для локальной модели"></p>
+
+**Предупреждение о передаче текста облачному провайдеру**
+
+<p align="center"><img src="docs/user-guide/screenshots/new-analysis-cloud.png" width="700" alt="Предупреждение о передаче текста облачному провайдеру"></p>
+
+**Отчёт: итоги, предупреждения, ограничения**
+
+<p align="center"><img src="docs/user-guide/screenshots/report-summary.png" width="700" alt="Отчёт: итоги, предупреждения, ограничения"></p>
+
+**Отсутствующее условие с областью поиска и блок «Экспорт»**
+
+<p align="center"><img src="docs/user-guide/screenshots/report-export.png" width="700" alt="Отсутствующее условие с областью поиска и блок «Экспорт»"></p>
+
+**Раздел «Анализы»**
+
+<p align="center"><img src="docs/user-guide/screenshots/analyses.png" width="700" alt="Раздел «Анализы»"></p>
+
+**Мой профиль: учётная запись, доступные модели, сессии**
+
+<p align="center"><img src="docs/user-guide/screenshots/account.png" width="700" alt="Мой профиль: учётная запись, доступные модели, сессии"></p>
+
+**Список пользователей**
+
+<p align="center"><img src="docs/user-guide/screenshots/users.png" width="700" alt="Список пользователей"></p>
+
+**Карточка пользователя: учётная запись, действия, доступ к моделям**
+
+<p align="center"><img src="docs/user-guide/screenshots/user-detail.png" width="700" alt="Карточка пользователя: учётная запись, действия, доступ к моделям"></p>
+
+**Модели и провайдеры: облачные модели, предупреждение, провайдеры**
+
+<p align="center"><img src="docs/user-guide/screenshots/models.png" width="700" alt="Модели и провайдеры: облачные модели, предупреждение, провайдеры"></p>
+
+**Настройка модели**
+
+<p align="center"><img src="docs/user-guide/screenshots/model-detail.png" width="700" alt="Настройка модели"></p>
+
+**Раздел «Правила»: каталог правил рисков организации**
+
+<p align="center"><img src="docs/user-guide/screenshots/risk-rules.png" width="700" alt="Раздел «Правила»: каталог правил рисков организации"></p>
+
+**Форма правила**
+
+<p align="center"><img src="docs/user-guide/screenshots/risk-rule-form.png" width="700" alt="Форма правила"></p>
+
+**Раздел «Настройки»**
+
+<p align="center"><img src="docs/user-guide/screenshots/settings.png" width="700" alt="Раздел «Настройки»"></p>
+
+**Настройки маскировки: категории данных**
+
+<p align="center"><img src="docs/user-guide/screenshots/settings-redaction.png" width="700" alt="Настройки маскировки: категории данных"></p>
+
+**Журнал аудита**
+
+<p align="center"><img src="docs/user-guide/screenshots/audit.png" width="700" alt="Журнал аудита"></p>
+
+**Состояние системы**
+
+<p align="center"><img src="docs/user-guide/screenshots/status.png" width="700" alt="Состояние системы"></p>
+
+</details>
+
+Все экраны с пояснениями — в [руководстве пользователя](docs/USER_GUIDE.docx).
+
 ## Архитектура
 
 ```
