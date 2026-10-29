@@ -150,6 +150,11 @@ class RelevanceStatus(StrEnum):
 class ProviderType(StrEnum):
     openrouter = "openrouter"
     ollama = "ollama"
+    proxyapi = "proxyapi"
+
+
+# Облачные агрегаторы с обязательным API-ключом (частная сеть для них запрещена).
+KEYED_CLOUD_PROVIDERS = frozenset({ProviderType.openrouter, ProviderType.proxyapi})
 
 
 class StructuredOutputSupport(StrEnum):

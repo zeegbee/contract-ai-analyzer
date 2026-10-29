@@ -19,9 +19,16 @@ from app.llm.http import ProviderHttp, RetryPolicy
 from app.llm.netguard import NetworkPolicy, Resolver
 from app.llm.ollama import OllamaProvider
 from app.llm.openrouter import OpenRouterProvider
+from app.llm.proxyapi import ProxyAPIProvider
 from app.models.catalog import ProviderConfig
-from app.models.enums import ProviderType
+from app.models.enums import KEYED_CLOUD_PROVIDERS, ProviderType
 from app.security.secretbox import SecretBox
+
+PROVIDER_TITLES = {
+    ProviderType.openrouter: "OpenRouter",
+    ProviderType.proxyapi: "ProxyAPI",
+    ProviderType.ollama: "Ollama",
+}
 
 
 def network_policy(cfg: ProviderConfig) -> NetworkPolicy:
@@ -95,8 +102,10 @@ class ProviderFactory:
             return _Throttled(self._override(cfg), self._semaphore(cfg))
         headers: dict[str, str] = {str(k): str(v) for k, v in (cfg.extra_headers or {}).items()}
         secret = self._secret(cfg)
-        if cfg.type is ProviderType.openrouter and not secret:
-            raise ProviderNotConfigured("Для OpenRouter не задан API-ключ", code="api_key_missing")
+        if cfg.type in KEYED_CLOUD_PROVIDERS and not secret:
+            raise ProviderNotConfigured(
+                f"Для {PROVIDER_TITLES[cfg.type]} не задан API-ключ", code="api_key_missing"
+            )
         if secret:
             headers["Authorization"] = f"Bearer {secret}"
         kwargs: dict[str, Any] = {}
@@ -113,7 +122,10 @@ class ProviderFactory:
             retry=self._retry,
             **kwargs,
         )
-        inner: LLMProvider = (
-            OpenRouterProvider(http) if cfg.type is ProviderType.openrouter else OllamaProvider(http)
-        )
+        adapters: dict[ProviderType, Callable[[ProviderHttp], LLMProvider]] = {
+            ProviderType.openrouter: OpenRouterProvider,
+            ProviderType.proxyapi: ProxyAPIProvider,
+            ProviderType.ollama: OllamaProvider,
+        }
+        inner: LLMProvider = adapters[cfg.type](http)
         return _Throttled(inner, self._semaphore(cfg))

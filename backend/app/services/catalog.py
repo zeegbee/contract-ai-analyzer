@@ -25,13 +25,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.errors import AppError, ConflictError, NotFoundError, PermissionDenied
 from app.llm.base import ChatMessage, GenerationParams, RemoteModelInfo, StructuredRequest
 from app.llm.errors import BlockedDestination, InvalidModelOutput, ProviderError
-from app.llm.factory import ProviderFactory, network_policy
+from app.llm.factory import PROVIDER_TITLES, ProviderFactory, network_policy
 from app.llm.netguard import parse_base_url, url_warnings
 from app.llm.ollama import DEFAULT_BASE_URL as OLLAMA_DEFAULT_URL
 from app.llm.openrouter import DEFAULT_BASE_URL as OPENROUTER_DEFAULT_URL
+from app.llm.proxyapi import DEFAULT_BASE_URL as PROXYAPI_DEFAULT_URL
 from app.models.analyses import Analysis
 from app.models.catalog import ModelConfig, ProviderConfig
-from app.models.enums import ProviderType, StructuredOutputSupport, UserRole
+from app.models.enums import KEYED_CLOUD_PROVIDERS, ProviderType, StructuredOutputSupport, UserRole
 from app.models.system import ConfigRevision, SystemSetting
 from app.models.users import ConsentRecord, User, UserModelPermission
 from app.schemas.catalog import (
@@ -61,8 +62,8 @@ SECRET_MASK = "***"  # noqa: S105 - маска, не секрет
 
 DEFAULT_CLOUD_NOTICE = (
     "Выбрана облачная модель. Фрагменты текста договора будут переданы через интернет внешнему "
-    "провайдеру (OpenRouter) и далее компании, которая обслуживает выбранную модель. Условия хранения "
-    "и использования переданных данных определяет провайдер — проверьте их до отправки "
+    "провайдеру (OpenRouter, ProxyAPI) и далее компании, которая обслуживает выбранную модель. "
+    "Условия хранения и использования переданных данных определяет провайдер — проверьте их до отправки "
     "конфиденциальных документов. Если передача недопустима, выберите локальную модель. "
     "Результат анализа не заменяет консультацию юриста."
 )
@@ -171,7 +172,9 @@ async def cloud_notice(db: AsyncSession) -> CloudNoticeOut:
         and isinstance(value.get("text"), str)
     ):
         return CloudNoticeOut(version=value["version"], text=value["text"])
-    return CloudNoticeOut(version="1", text=DEFAULT_CLOUD_NOTICE)
+    # Версия 2: в тексте названы оба облачных агрегатора (OpenRouter, ProxyAPI) — согласия
+    # запрашиваются заново.
+    return CloudNoticeOut(version="2", text=DEFAULT_CLOUD_NOTICE)
 
 
 async def _put_setting(db: AsyncSession, key: str, value: Any, actor: Actor) -> None:
@@ -247,9 +250,25 @@ def _validate_headers(headers: dict[str, str]) -> dict[str, str]:
     return result
 
 
+DEFAULT_URLS = {
+    ProviderType.openrouter: OPENROUTER_DEFAULT_URL,
+    ProviderType.proxyapi: PROXYAPI_DEFAULT_URL,
+    ProviderType.ollama: OLLAMA_DEFAULT_URL,
+}
+
+
+def _ensure_key_for_enabled(provider: ProviderConfig) -> None:
+    if provider.enabled and provider.type in KEYED_CLOUD_PROVIDERS and provider.secret_ciphertext is None:
+        raise AppError(
+            f"Для включения {PROVIDER_TITLES[provider.type]} задайте API-ключ",
+            code="api_key_missing",
+            status_code=422,
+        )
+
+
 def _apply_network_rules(provider: ProviderConfig, requested_is_cloud: bool | None) -> None:
     """Согласует тип, облачность и частную сеть; проверяет адрес (без DNS)."""
-    if provider.type is ProviderType.openrouter:
+    if provider.type in KEYED_CLOUD_PROVIDERS:
         if provider.allow_private_network:
             raise AppError(
                 "Частная сеть разрешается только для Ollama",
@@ -257,7 +276,11 @@ def _apply_network_rules(provider: ProviderConfig, requested_is_cloud: bool | No
                 status_code=422,
             )
         if requested_is_cloud is False:
-            raise AppError("OpenRouter — облачный провайдер", code="cloud_flag_invalid", status_code=422)
+            raise AppError(
+                f"{PROVIDER_TITLES[provider.type]} — облачный провайдер",
+                code="cloud_flag_invalid",
+                status_code=422,
+            )
         provider.is_cloud = True
     elif not provider.allow_private_network:
         # Ollama по публичному адресу: текст уходит во внешнюю сеть — это облачный провайдер.
@@ -385,13 +408,13 @@ async def create_provider(
     db: AsyncSession, actor: Actor, box: SecretBox, body: ProviderCreateIn
 ) -> ProviderConfig:
     policies.ensure(policies.can_manage_providers(actor.user))
-    default_url = OPENROUTER_DEFAULT_URL if body.type is ProviderType.openrouter else OLLAMA_DEFAULT_URL
+    default_url = DEFAULT_URLS[body.type]
     provider = ProviderConfig(
         id=uuid.uuid4(),
         name=body.name,
         type=body.type,
         base_url=(body.base_url or default_url).rstrip("/"),
-        is_cloud=body.type is ProviderType.openrouter,
+        is_cloud=body.type in KEYED_CLOUD_PROVIDERS,
         enabled=body.enabled,
         allow_private_network=body.allow_private_network,
         timeout_s=body.timeout_s,
@@ -403,8 +426,7 @@ async def create_provider(
     _apply_network_rules(provider, body.is_cloud)
     if body.api_key is not None:
         _set_secret(provider, box, body.api_key.get_secret_value())
-    if provider.enabled and provider.type is ProviderType.openrouter and provider.secret_ciphertext is None:
-        raise AppError("Для включения OpenRouter задайте API-ключ", code="api_key_missing", status_code=422)
+    _ensure_key_for_enabled(provider)
     db.add(provider)
     await db.flush()
     diff = _mask_secret_diff(_diff({}, _provider_state(provider)))
@@ -423,7 +445,7 @@ async def create_provider(
     return provider
 
 
-async def update_provider(  # noqa: PLR0912 - по ветке на поле
+async def update_provider(
     db: AsyncSession, actor: Actor, box: SecretBox, provider_id: uuid.UUID, body: ProviderUpdateIn
 ) -> tuple[ProviderConfig, bool]:
     """Возвращает (провайдер, сброшен ли ключ из-за смены адреса)."""
@@ -459,8 +481,7 @@ async def update_provider(  # noqa: PLR0912 - по ветке на поле
         # Смена адреса без нового ключа: старый ключ не должен уйти на новый адрес.
         secret_reset = url_changed and not body.clear_api_key
         _clear_secret(provider)
-    if provider.enabled and provider.type is ProviderType.openrouter and provider.secret_ciphertext is None:
-        raise AppError("Для включения OpenRouter задайте API-ключ", code="api_key_missing", status_code=422)
+    _ensure_key_for_enabled(provider)
     after = _provider_state(provider)
     diff = _mask_secret_diff(_diff(before, after))
     if not diff:

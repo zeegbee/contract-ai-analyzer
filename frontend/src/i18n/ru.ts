@@ -244,9 +244,13 @@ export const ru = {
       name: 'Название',
       type: 'Тип',
       baseUrl: 'Адрес API',
-      baseUrlHintOpenRouter: 'По умолчанию https://openrouter.ai/api/v1',
-      baseUrlHintOllama:
-        'В Docker Compose — http://ollama:11434 (профиль ollama); Ollama на хосте — host.docker.internal или IP хоста. localhost внутри контейнера — это сам контейнер.',
+      baseUrlHint: {
+        openrouter: 'По умолчанию https://openrouter.ai/api/v1',
+        proxyapi:
+          'По умолчанию https://api.proxyapi.ru/v1. ProxyAPI не сообщает цены моделей в API — задайте их вручную в рублях в карточке модели.',
+        ollama:
+          'В Docker Compose — http://ollama:11434 (профиль ollama); Ollama на хосте — host.docker.internal или IP хоста. localhost внутри контейнера — это сам контейнер.',
+      },
       apiKey: 'API-ключ',
       apiKeyHint: 'Хранится зашифрованным и больше не показывается. Оставьте пустым, чтобы не менять.',
       apiKeySet: (last4: string | null) => `ключ задан${last4 ? ` (…${last4})` : ''}`,

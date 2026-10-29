@@ -137,6 +137,41 @@ describe('модели и провайдеры', () => {
     expect(screen.queryByDisplayValue('sk-or-v1-secret-value-123')).not.toBeInTheDocument()
   })
 
+  it('создаёт провайдера ProxyAPI с подсказкой об адресе и ценах', async () => {
+    serveMe(makeMe('superadmin'))
+    serveCatalog({ providers: [], models: [] })
+    let body: Record<string, unknown> | null = null
+    server.use(
+      http.post('*/api/admin/providers', async ({ request }) => {
+        body = (await request.json()) as Record<string, unknown>
+        return HttpResponse.json(
+          makeProvider({ id: 'p-3', name: 'ProxyAPI', type: 'proxyapi', base_url: 'https://api.proxyapi.ru/v1' }),
+          { status: 201 },
+        )
+      }),
+    )
+    renderRoute('/admin/models')
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: 'Добавить провайдера' }))
+    const form = screen.getByRole('form', { name: 'Добавить провайдера' })
+    await user.type(within(form).getByLabelText('Название'), 'ProxyAPI')
+    await user.selectOptions(within(form).getByLabelText('Тип'), 'proxyapi')
+    expect(within(form).getByLabelText('Адрес API')).toHaveAttribute('placeholder', 'https://api.proxyapi.ru/v1')
+    expect(within(form).getByText(/задайте их вручную в рублях/)).toBeInTheDocument()
+    expect(within(form).queryByLabelText(/Разрешить частную сеть/)).not.toBeInTheDocument()
+    await user.type(within(form).getByLabelText('API-ключ'), 'proxy-secret-key-1234')
+    await user.click(within(form).getByRole('button', { name: 'Сохранить' }))
+    await waitFor(() => expect(body).not.toBeNull())
+    expect(body).toMatchObject({ type: 'proxyapi', api_key: 'proxy-secret-key-1234', allow_private_network: false })
+  })
+
+  it('показывает тип провайдера ProxyAPI в списке', async () => {
+    serveMe(makeMe('superadmin'))
+    serveCatalog({ providers: [makeProvider({ name: 'Прокси', type: 'proxyapi', base_url: 'https://api.proxyapi.ru/v1' })] })
+    renderRoute('/admin/models')
+    expect(await screen.findByText(/ProxyAPI ·/)).toBeInTheDocument()
+  })
+
   it('показывает ошибку SSRF-проверки адреса', async () => {
     serveMe(makeMe('superadmin'))
     serveCatalog({ providers: [], models: [] })

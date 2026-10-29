@@ -8,8 +8,20 @@ export const MODELS_KEY = [...CATALOG_KEY, 'models'] as const
 export const AVAILABLE_MODELS_KEY = ['models', 'available'] as const
 export const LLM_SETTINGS_KEY = [...CATALOG_KEY, 'settings'] as const
 
-const providerTypeSchema = z.enum(['openrouter', 'ollama'])
+const providerTypeSchema = z.enum(['openrouter', 'proxyapi', 'ollama'])
 export type ProviderType = z.infer<typeof providerTypeSchema>
+
+export const PROVIDER_TITLES: Record<ProviderType, string> = {
+  openrouter: 'OpenRouter',
+  proxyapi: 'ProxyAPI',
+  ollama: 'Ollama',
+}
+
+export const PROVIDER_DEFAULT_URLS: Record<ProviderType, string> = {
+  openrouter: 'https://openrouter.ai/api/v1',
+  proxyapi: 'https://api.proxyapi.ru/v1',
+  ollama: 'http://ollama:11434',
+}
 
 const structuredSchema = z.enum(['json_schema', 'json_mode', 'none', 'unknown'])
 export type StructuredOutput = z.infer<typeof structuredSchema>

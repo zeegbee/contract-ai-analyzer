@@ -857,3 +857,32 @@ PostgreSQL для тестов — временный контейнер `postgr
 ### Удаление имени автора из истории git (2026-10-29, по запросу владельца)
 - История `main` переписана (`git filter-branch --tree-filter`) для коммитов начиная с «Model reasoning mode…»: в каждом коммите убраны строка автора в подвале интерфейса (`ru.ts`, `Layout.tsx`, тест подвала), автор в `docs/user-guide/build.cjs`, поля `dc:creator`/`cp:lastModifiedBy` в `docs/USER_GUIDE.docx`; в коммите обновления руководства — также подвал DOCX и скриншоты с подвалом. Метаданные автора коммитов и строки `Co-Authored-By` не менялись (решение владельца).
 - Проверка: сканер содержимого всех коммитов `main` (текст, DOCX/XLSX/PPTX по частям архива, PDF — текст и метаданные) имя не находит; `git diff backup/before-author-scrub main` — 15 файлов, только перечисленные правки; frontend на HEAD — `typecheck`, `oxlint` без замечаний, `vitest` — `Tests 112 passed (112)`.
+
+## Доработка 2026-10-29 — провайдер ProxyAPI
+
+### Что сделано
+- Новый тип провайдера `proxyapi` (proxyapi.ru — агрегатор с OpenAI-совместимым API, оплата в рублях): адаптер `backend/app/llm/proxyapi.py` (наследует разбор ответа и ошибок `OpenRouterProvider`), подключение в `ProviderFactory`, общий набор облачных провайдеров с обязательным ключом `KEYED_CLOUD_PROVIDERS` (`app/models/enums.py`) — правила «всегда облачный», «частная сеть запрещена», «без ключа не включить» применяются к OpenRouter и ProxyAPI одинаково.
+- Запрос: `POST /chat/completions`, `response_format` json_schema (strict) / json_object, без `provider.require_parameters`; лимит ответа — `max_completion_tokens`; рассуждения «выключены» → `reasoning_effort: "minimal"`. Проверка соединения и импорт моделей — `GET /models` (`data[]`: `id`, `object`, `created`, `owned_by`), проверка модели — `GET /models/<vendor>/<model>`; цен и контекста в ответе нет — цены задаются вручную в RUB.
+- Миграция `0010_proxyapi_provider`: пересоздание CHECK `ck_provider_configs_provider_type` (+`proxyapi`), данные не меняются; `drop_constraint` с пометкой `# destructive-approved:` — согласовано владельцем 2026-10-29. Ожидаемая ревизия в `e2e/backup-offsite.sh` → `0010_proxyapi_provider`.
+- Текст облачного предупреждения по умолчанию называет OpenRouter и ProxyAPI; версия по умолчанию повышена `1` → `2` (пользователи, принявшие текст по умолчанию, подтвердят его заново; сохранённый Superadmin'ом текст не затронут).
+- Frontend: тип в форме провайдера, подсказка адреса/цен по типу (`t.providers.baseUrlHint`), `PROVIDER_TITLES`/`PROVIDER_DEFAULT_URLS` в `src/api/catalog.ts`.
+- Документация: ARCHITECTURE §5, §12.1; OPERATIONS §11 (раздел «ProxyAPI», ротация ключей); SECURITY_AND_PRIVACY (передача данных, логирование в кабинете ProxyAPI).
+
+### Сверка с документацией ProxyAPI (2026-10-29)
+- Прочитаны proxyapi.ru/docs: api-overview, structured-outputs, reasoning, cost-of-request, balance, errors, rate-limits, logs. Страницы text-generation, masking, quickstart были недоступны (соединение отклонено); раздел о моделях (`GET /v1/models`, `GET /v1/models/<vendor>/<model>`, формат ответа) прислал владелец. Из контейнера backend без ключа: `GET https://api.proxyapi.ru/v1/models` → `401 {"detail":"Invalid API Key"}` — формат ошибки ProxyAPI совпадает с тестовым.
+
+### Проверки (реально запущены)
+| Проверка | Результат |
+|---|---|
+| `ruff check app tests`, `ruff format`, `mypy app tests` | `All checks passed!`; `Success: no issues found in 178 source files` |
+| `pytest -q` (тестовая БД на 56432) | `661 passed in 244.51s` (после уточнения формата каталога юнит-тесты провайдеров — `43 passed`; новые: 11 юнит-тестов ProxyAPI в `test_llm_providers.py`, интеграционный `test_proxyapi_provider_defaults_cloud_and_requires_key` и 2 случая валидации адреса в `test_catalog_api.py`) |
+| Миграции: `upgrade head` → `alembic check` → `downgrade -1` → `upgrade head` | `No new upgrade operations detected.`; `0010_proxyapi_provider (head)`; CHECK содержит `proxyapi` |
+| Frontend: `typecheck`, `oxlint --deny-warnings`, `vitest run`, `build` | без замечаний; `Tests 114 passed (114)`; сборка успешна |
+| Основной стенд `docker compose up -d --build` | readiness 200, все проверки `ok`; `alembic current` → `0010_proxyapi_provider (head)` |
+| После уточнения каталога: `pytest -q tests/integration/test_catalog_api.py tests/unit`; пересборка backend/worker | `428 passed in 28.53s`; readiness — все проверки `ok` |
+
+### Ограничения
+- **Live без генерации (2026-10-29, ключ владельца введён через UI, провайдер «ProxyAPI»)**: проверка соединения в UI — `ok`; `list_models` — 797 моделей (qwen 82, openai 77, mistralai 40, google 27, deepseek 23, anthropic 19 …), контекста нет ни у одной (как в документации); `describe_model` для `openai/gpt-4o-mini` и `openai/gpt-5-mini` — найдены. **Генерация (платная) не выполнялась.**
+- **Нестабильная связь с `api.proxyapi.ru` (единственный адрес 139.100.194.210) из сети стенда**: многие запросы — таймаут соединения 10 с (`provider_timeout`, повторы спасали не всегда; `describe_model("nope/nope")` так и не дождался ответа); затем TCP-проверка из контейнера — 0 из 10, с хоста `curl` — 1 из 6. Это сеть/доступность хоста ProxyAPI, а не код; при такой связи анализ через ProxyAPI будет падать по таймаутам.
+- `reasoning_effort: "minimal"` для моделей без рассуждений может дать 400; для них режим рассуждений оставлять «включён».
+- e2e (`bash e2e/run.sh all`) не запускался: сценарии используют mock Ollama, изменения их не затрагивают, кроме ожидаемой ревизии в `backup-offsite.sh`.

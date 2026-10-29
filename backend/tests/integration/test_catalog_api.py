@@ -121,6 +121,33 @@ async def test_changing_base_url_resets_secret(api: ApiEnv) -> None:
         assert r.status_code == 422 and r.json()["error"]["code"] == "api_key_missing"
 
 
+async def test_proxyapi_provider_defaults_cloud_and_requires_key(api: ApiEnv) -> None:
+    recorder = Recorder(httpx.Response(200, json={"data": [{"id": "openai/gpt-4o-mini"}]}))
+    use_network(api, recorder)
+    c = await _superadmin(api)
+    async with c:
+        r = await c.post(
+            "/api/admin/providers", json={"name": "ProxyAPI", "type": "proxyapi", "enabled": True}
+        )
+        assert r.status_code == 422 and r.json()["error"]["code"] == "api_key_missing"
+        r = await c.post(
+            "/api/admin/providers",
+            json={"name": "ProxyAPI", "type": "proxyapi", "api_key": API_KEY, "enabled": True},
+        )
+        assert r.status_code == 201, r.text
+        provider = r.json()
+        assert provider["type"] == "proxyapi" and provider["is_cloud"] is True
+        assert provider["base_url"] == "https://api.proxyapi.ru/v1"
+        r = await c.post(f"/api/admin/providers/{provider['id']}/check")
+        assert r.status_code == 200, r.text
+        assert recorder.requests[-1].url.path == "/v1/models"
+        assert recorder.requests[-1].headers["authorization"] == f"Bearer {API_KEY}"
+        r = await c.patch(
+            f"/api/admin/providers/{provider['id']}", json={"version": provider["version"], "is_cloud": False}
+        )
+        assert r.status_code == 422 and r.json()["error"]["code"] == "cloud_flag_invalid"
+
+
 async def test_version_conflict(api: ApiEnv) -> None:
     c = await _superadmin(api)
     async with c:
@@ -141,6 +168,8 @@ async def test_version_conflict(api: ApiEnv) -> None:
         ({"type": "openrouter", "base_url": "https://u:p@openrouter.ai/api/v1"}, "userinfo_not_allowed"),
         ({"type": "openrouter", "base_url": "file:///etc/passwd"}, "scheme_not_allowed"),
         ({"type": "openrouter", "allow_private_network": True}, "private_network_not_allowed"),
+        ({"type": "proxyapi", "allow_private_network": True}, "private_network_not_allowed"),
+        ({"type": "proxyapi", "base_url": "http://api.proxyapi.ru/v1"}, "https_required"),
         ({"type": "ollama", "base_url": "http://ollama:11434"}, "https_required"),
         ({"type": "ollama", "base_url": "https://127.0.0.1:11434"}, "loopback_blocked"),
         (

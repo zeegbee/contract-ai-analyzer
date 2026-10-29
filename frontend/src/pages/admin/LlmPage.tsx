@@ -19,6 +19,8 @@ import {
   MODELS_KEY,
   type Provider,
   type ProviderInput,
+  PROVIDER_DEFAULT_URLS,
+  PROVIDER_TITLES,
   PROVIDERS_KEY,
   type ProviderType,
   updateLlmSettings,
@@ -179,21 +181,24 @@ function ProviderForm({ provider, onDone }: { provider?: Provider; onDone: (p: P
             disabled={Boolean(provider)}
             onChange={(e) => set('type', e.target.value as ProviderType)}
           >
-            <option value="openrouter">OpenRouter</option>
-            <option value="ollama">Ollama</option>
+            {(Object.keys(PROVIDER_TITLES) as ProviderType[]).map((type) => (
+              <option key={type} value={type}>
+                {PROVIDER_TITLES[type]}
+              </option>
+            ))}
           </select>
         </Field>
         <Field
           id={`${prefix}-url`}
           label={t.providers.baseUrl}
-          hint={d.type === 'ollama' ? t.providers.baseUrlHintOllama : t.providers.baseUrlHintOpenRouter}
+          hint={t.providers.baseUrlHint[d.type]}
         >
           <input
             id={`${prefix}-url`}
             className={inputClass}
             value={d.base_url}
             maxLength={500}
-            placeholder={d.type === 'ollama' ? 'http://ollama:11434' : 'https://openrouter.ai/api/v1'}
+            placeholder={PROVIDER_DEFAULT_URLS[d.type]}
             onChange={(e) => set('base_url', e.target.value)}
           />
         </Field>
@@ -376,7 +381,7 @@ function ProviderCard({ provider }: { provider: Provider }) {
             {!provider.enabled && <Badge tone="red">{t.providers.offBadge}</Badge>}
           </p>
           <p className="text-sm text-slate-700">
-            {provider.type === 'openrouter' ? 'OpenRouter' : 'Ollama'} · <code>{provider.base_url}</code>
+            {PROVIDER_TITLES[provider.type]} · <code>{provider.base_url}</code>
           </p>
           <p className="text-xs text-slate-600">
             {provider.has_secret ? t.providers.apiKeySet(provider.secret_last4) : t.providers.apiKeyMissing} ·{' '}

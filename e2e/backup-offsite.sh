@@ -122,7 +122,7 @@ MSYS_NO_PATHCONV=1 docker run --rm -i --user "$(id -u):$(id -g)" -v "${IDENTITY}
   < "${BACKUP_DIR}/${name}" | tar -C "${STATE}/decrypt" -xf -
 inner="$(ls -1 "${STATE}/decrypt")"
 ( cd "${STATE}/decrypt/${inner}" && sha256sum -c --quiet SHA256SUMS ) || fail "контрольные суммы после расшифровки"
-grep -q '^alembic_revision=0009_risk_rules$' "${STATE}/decrypt/${inner}/MANIFEST" || fail "MANIFEST"
+grep -q '^alembic_revision=0010_proxyapi_provider$' "${STATE}/decrypt/${inner}/MANIFEST" || fail "MANIFEST"
 if MSYS_NO_PATHCONV=1 docker run --rm -i "${TOOLS}" sh -c 'age-keygen -o /tmp/k 2>/dev/null && age -d -i /tmp/k' \
     < "${BACKUP_DIR}/${name}" > /dev/null 2>&1; then
   fail "архив расшифровался чужим ключом"

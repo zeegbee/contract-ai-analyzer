@@ -335,6 +335,123 @@ async def test_api_key_never_in_logs_errors_or_repr(capsys: pytest.CaptureFixtur
     assert secret_tail not in repr(provider) and secret_tail not in repr(provider.inner.http)
 
 
+# ------------------------------------------------------------------ ProxyAPI
+
+
+def _proxyapi(recorder: Recorder, sleeps: Sleeps | None = None):
+    box = secret_box()
+    cfg = provider_config(box, ProviderType.proxyapi, base_url="https://api.proxyapi.ru/v1")
+    return factory(box, recorder, sleeps=sleeps).build(cfg)
+
+
+async def test_proxyapi_structured_request_without_openrouter_fields() -> None:
+    recorder = Recorder(chat_ok({"risks": []}, usage={"prompt_tokens": 850, "completion_tokens": 120}))
+    result = await _proxyapi(recorder).generate_structured(_request())
+    assert result.parsed_json == {"risks": []}
+    # Стоимость ProxyAPI в ответе не сообщает — считается по ценам каталога (рубли, вручную).
+    assert result.usage is not None and result.usage.prompt_tokens == 850 and result.usage.cost is None
+
+    [request] = recorder.requests
+    assert request.url.path == "/v1/chat/completions"
+    assert request.headers["host"] == "api.proxyapi.ru"
+    assert request.headers["authorization"] == f"Bearer {API_KEY}"
+    body = json.loads(request.content)
+    assert body["response_format"] == {
+        "type": "json_schema",
+        "json_schema": {"name": "chunk_analysis", "strict": True, "schema": SCHEMA},
+    }
+    assert "provider" not in body and "max_tokens" not in body and "reasoning" not in body
+    assert (body["temperature"], body["seed"], body["max_completion_tokens"]) == (0.1, 7, 1000)
+
+
+async def test_proxyapi_json_mode_and_unconfirmed_schema() -> None:
+    recorder = Recorder(chat_ok({"risks": []}))
+    await _proxyapi(recorder).generate_structured(_request(StructuredOutputSupport.json_mode))
+    body = recorder.bodies()[0]
+    assert body["response_format"] == {"type": "json_object"} and "provider" not in body
+    recorder = Recorder(chat_ok({"risks": []}))
+    await _proxyapi(recorder).generate_structured(_request(StructuredOutputSupport.unknown))
+    body = recorder.bodies()[0]
+    assert "response_format" not in body and "JSON Schema" in body["messages"][0]["content"]
+
+
+@pytest.mark.parametrize(("mode", "expected"), [("off", "minimal"), (None, None)])
+async def test_proxyapi_reasoning_mode(mode: str | None, expected: str | None) -> None:
+    recorder = Recorder(chat_ok({"risks": []}))
+    await _proxyapi(recorder).generate_structured(_with_reasoning(mode))
+    assert recorder.bodies()[0].get("reasoning_effort") == expected
+
+
+@pytest.mark.parametrize(
+    ("response", "error"),
+    [
+        (httpx.Response(401, json={"detail": "Invalid API key"}), ProviderAuthError),
+        (
+            httpx.Response(402, json={"detail": "Insufficient balance to run this request."}),
+            ProviderQuotaExceeded,
+        ),
+        (or_error(400, "This model's maximum context length is 128000 tokens"), ContextTooLong),
+        (httpx.Response(404, json={"detail": "Model not found"}), ModelUnavailable),
+    ],
+)
+async def test_proxyapi_errors_are_not_retried(response: httpx.Response, error: type[Exception]) -> None:
+    # 4xx ставят ключ ProxyAPI на паузу (20 за минуту) — повторять их нельзя.
+    recorder = Recorder(response)
+    with pytest.raises(error):
+        await _proxyapi(recorder).generate_structured(_request())
+    assert len(recorder.requests) == 1
+
+
+async def test_proxyapi_without_key_is_not_configured() -> None:
+    box = secret_box()
+    cfg = provider_config(box, ProviderType.proxyapi, base_url="https://api.proxyapi.ru/v1", api_key=None)
+    with pytest.raises(ProviderNotConfigured):
+        factory(box, Recorder(chat_ok({}))).build(cfg)
+
+
+async def test_proxyapi_models_and_check_connection() -> None:
+    models = {
+        "object": "list",
+        "data": [
+            {"id": "openai/gpt-4o-mini", "object": "model", "created": 1745884800, "owned_by": "openai"},
+            {"id": "anthropic/claude-haiku-4-5", "name": "Claude Haiku 4.5", "context_length": 200000},
+            {"id": ""},
+            "garbage",
+        ],
+    }
+    recorder = Recorder(httpx.Response(200, json=models))
+    provider = _proxyapi(recorder)
+    first, second = await provider.list_models()
+    assert (first.external_model_id, first.display_name, first.context_window) == (
+        "openai/gpt-4o-mini",
+        "openai/gpt-4o-mini",
+        None,
+    )
+    assert (second.display_name, second.context_window) == ("Claude Haiku 4.5", 200000)
+    # Цены не берутся из API: валюта не задокументирована, задаются вручную.
+    assert first.prompt_price_per_mtok is None and second.completion_price_per_mtok is None
+    assert recorder.requests[0].url.path == "/v1/models"
+
+    health = await provider.check_connection()
+    assert health.ok and health.details == {"models": 2}
+    with pytest.raises(ProviderAuthError):
+        await _proxyapi(Recorder(httpx.Response(401, json={"detail": "Unauthorized"}))).check_connection()
+
+
+async def test_proxyapi_describe_model_by_id() -> None:
+    model = {"id": "openai/gpt-5-mini", "object": "model", "created": 1745884800, "owned_by": "openai"}
+    recorder = Recorder(httpx.Response(200, json=model))
+    info = await _proxyapi(recorder).describe_model("openai/gpt-5-mini")
+    assert (info.external_model_id, info.context_window) == ("openai/gpt-5-mini", None)
+    assert recorder.requests[0].url.raw_path == b"/v1/models/openai/gpt-5-mini"
+    with pytest.raises(ModelUnavailable):
+        await _proxyapi(Recorder(httpx.Response(404, json={"detail": "Model not found"}))).describe_model(
+            "x/y"
+        )
+    with pytest.raises(ProviderUnavailable):
+        await _proxyapi(Recorder(httpx.Response(200, json={"object": "list"}))).describe_model("x/y")
+
+
 # ------------------------------------------------------------------ Ollama
 
 
