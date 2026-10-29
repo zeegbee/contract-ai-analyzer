@@ -448,7 +448,7 @@ StructuredResult: parsed_json, raw_text_len, usage: Usage | None (prompt/complet
 - **Snapshot**: `config_snapshot(model, provider)` — провайдер (id, имя, тип, хост, облачность, версия), модель (id, external id, контекст, лимит вывода, параметры генерации, режим structured output, цена с источником, версия), время; без ключа и полного URL. Сохраняется в `Analysis.config_snapshot` при запуске анализа (этап 06).
 - **Цены**: из API провайдера (`source=provider_api`, `fetched_at`) или введённые администратором (`admin_manual`); при неизвестной цене `pricing = null`, UI показывает «неизвестна». Ручная цена не перезаписывается проверкой модели. Контекст/лимит вывода из API заполняются, только если поле пустое.
 - **ProxyAPI** (добавлен 2026-10-29, `app/llm/proxyapi.py`): агрегатор proxyapi.ru с OpenAI-совместимым API, адрес по умолчанию `https://api.proxyapi.ru/v1`, модели вида `vendor/model` (`openai/gpt-4o-mini`). Разбор ответа и ошибок — общий с OpenRouter (наследование `OpenRouterProvider`); отличия тела запроса: нет `provider.require_parameters`, лимит ответа — `max_completion_tokens`, рассуждения «выключены» → `reasoning_effort: "minimal"` (нижнее документированное значение). Стоимости в ответе нет, расчёты в рублях — цены моделей задаются вручную (`currency: RUB`, `source: admin_manual`). Проверка соединения и каталог — `GET /models` (`data[]` с `id`, `object`, `created`, `owned_by`; контекста и цен нет), одна модель — `GET /models/<vendor>/<model>` (проверка модели). Баланс `GET /proxyapi/balance` не используется: по умолчанию недоступен ключам. 4xx не повторяются: 20 ответов 4xx за минуту ставят ключ ProxyAPI на паузу.
-- **Режим рассуждений** (добавлен 2026-10-20): в UI два варианта — «включён» (параметр не передаётся, модель рассуждает в режиме по умолчанию) и «выключен» (`generation_params.reasoning = "off"`; другие значения отклоняются с 422). OpenRouter: `off` → `reasoning: {effort: "none"}`; Ollama: `off` → `think: false`. Уровни усилия (`low|medium|high`) по решению владельца не поддерживаются: на OpenRouter заданный уровень оказался медленнее режима модели по умолчанию. Проверка модели с генерацией использует тот же режим. Режим попадает в snapshot анализа вместе с остальными параметрами.
+- **Режим рассуждений** (добавлен 2026-10-20): в UI два варианта — «включён» (параметр не передаётся, модель рассуждает в режиме по умолчанию) и «выключен» (`generation_params.reasoning = "off"`; другие значения отклоняются с 422). OpenRouter: `off` → `reasoning: {effort: "none"}`; Ollama: `off` → `think: false`. Уровни усилия (`low|medium|high`) не поддерживаются: на OpenRouter заданный уровень оказался медленнее режима модели по умолчанию. Проверка модели с генерацией использует тот же режим. Режим попадает в snapshot анализа вместе с остальными параметрами.
 - **Модель по умолчанию**: не более одной (частичный уникальный индекс, миграция `0003_model_catalog`); только включённая модель с назначением `analysis`; при выключении модели флаг снимается.
 
 ## 13. Фоновые задачи
@@ -557,7 +557,7 @@ Live-проверки OpenRouter/Ollama не входят в CI; если не �
 
 ## 22. Маскировка перед облачным анализом (этап 10)
 
-План и решения владельца — [REDACTION_PLAN.md](REDACTION_PLAN.md). Код — `backend/app/redaction/` (обнаружение, таблица соответствий), `app/services/redaction.py` (настройки, предпросмотры, запуск), `app/api/redaction.py`; UI — `frontend/src/pages/analyses/RedactionPreview.tsx`, `frontend/src/pages/admin/RedactionSection.tsx`.
+План и решения — [REDACTION_PLAN.md](REDACTION_PLAN.md). Код — `backend/app/redaction/` (обнаружение, таблица соответствий), `app/services/redaction.py` (настройки, предпросмотры, запуск), `app/api/redaction.py`; UI — `frontend/src/pages/analyses/RedactionPreview.tsx`, `frontend/src/pages/admin/RedactionSection.tsx`.
 
 ```
 предпросмотр (POST …/redaction-previews) → задача redaction_scan (дочерний процесс с лимитами:
@@ -581,7 +581,7 @@ Live-проверки OpenRouter/Ollama не входят в CI; если не �
 
 ## 23. Правила рисков организации (этап 11)
 
-План и решения владельца — [RISK_RULES_PLAN.md](RISK_RULES_PLAN.md). Код — `app/models/risk_rules.py`, `app/schemas/risk_rules.py`, `app/services/risk_rules.py`, `app/api/risk_rules.py`; промпты — `app/analysis/prompts.py` (`org_rules_block`, `rules_for`); UI — `frontend/src/pages/admin/RiskRulesPage.tsx` (страница «Правила», `/admin/risk-rules`), вложенные флажки в `NewAnalysisPage.tsx`, бейдж и фильтр в `RiskCard`/`RisksSection`.
+План и решения — [RISK_RULES_PLAN.md](RISK_RULES_PLAN.md). Код — `app/models/risk_rules.py`, `app/schemas/risk_rules.py`, `app/services/risk_rules.py`, `app/api/risk_rules.py`; промпты — `app/analysis/prompts.py` (`org_rules_block`, `rules_for`); UI — `frontend/src/pages/admin/RiskRulesPage.tsx` (страница «Правила», `/admin/risk-rules`), вложенные флажки в `NewAnalysisPage.tsx`, бейдж и фильтр в `RiskCard`/`RisksSection`.
 
 ```
 Admin/Superadmin: правило (категория, тип, описание, признаки, уровень, рекомендация) → включено
@@ -604,6 +604,6 @@ Admin/Superadmin: правило (категория, тип, описание, 
 - **Бюджет.** Длина блока правил вычитается из бюджета текста на чанк (`text_budget_tokens(..., extra_prompt_tokens)`), в snapshot — `chunking.rules_prompt_tokens`. Оценка (`estimate`) учитывает блок в каждой части и в межраздельном проходе (`rules_extra_tokens`); форма предупреждает, если правила увеличивают оценку больше чем на 25 %.
 - **Snapshot и повтор.** `retry` использует текст правил из snapshot, даже если правило затем изменено, выключено или отправлено в архив. Повтор по Idempotency-Key сравнивает и набор правил.
 - **Права.** Управление — `policies.can_manage_risk_rules` (Admin, Superadmin; в `/auth/me` — `capabilities.manage_risk_rules`); `available` — пустой список для ролей без права запуска анализа (Viewer). Аудит `risk_rule.created|updated|enabled|disabled|archived|restored` — код правила и имена изменённых полей, без текста.
-- **Маскировка (этап 10)** к тексту правил не применяется (решение владельца): форма правила предупреждает не указывать персональные и конфиденциальные данные.
+- **Маскировка (этап 10)** к тексту правил не применяется: форма правила предупреждает не указывать персональные и конфиденциальные данные.
 - **Версии.** `PIPELINE_VERSION = pipeline-3`, `SCHEMA_VERSION = schema-2`, промпты `chunk-3`, `cross-3`.
 

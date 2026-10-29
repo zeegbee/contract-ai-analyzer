@@ -628,7 +628,7 @@ shred -u /root/backup-key.txt                            # удалите клю
 
 ## 17. Маскировка данных перед облачным анализом (этап 10)
 
-Архитектура — ARCHITECTURE §22, план и решения владельца — [REDACTION_PLAN.md](REDACTION_PLAN.md).
+Архитектура — ARCHITECTURE §22, план и решения — [REDACTION_PLAN.md](REDACTION_PLAN.md).
 
 ### 17.1 Как это работает для пользователя
 
@@ -672,7 +672,7 @@ shred -u /root/backup-key.txt                            # удалите клю
 
 ## 18. Правила рисков организации (этап 11)
 
-Архитектура — ARCHITECTURE §23, план и решения владельца — [RISK_RULES_PLAN.md](RISK_RULES_PLAN.md).
+Архитектура — ARCHITECTURE §23, план и решения — [RISK_RULES_PLAN.md](RISK_RULES_PLAN.md).
 
 ### 18.1 Управление («Правила», `/admin/risk-rules`; API `/api/admin/risk-rules`)
 
